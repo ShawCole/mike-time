@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
+import { API_ENDPOINTS } from '../config/api';
 
 const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -18,7 +19,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await axios.post('http://localhost:3001/api/upload', formData, {
+            const response = await axios.post(API_ENDPOINTS.upload, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                 },

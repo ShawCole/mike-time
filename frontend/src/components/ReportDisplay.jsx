@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import axios from 'axios';
+import { API_ENDPOINTS } from '../config/api';
 
 const ReportDisplay = ({ data, onReset }) => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -37,7 +38,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
     const handleFixIssue = async (issueId) => {
         try {
-            const response = await axios.post('http://localhost:3001/api/fix-issue', {
+            const response = await axios.post(API_ENDPOINTS.fixIssue, {
                 sessionId: data.sessionId,
                 issueId: issueId
             });
@@ -62,7 +63,7 @@ const ReportDisplay = ({ data, onReset }) => {
     const handleFixAll = async () => {
         setIsFixingAll(true);
         try {
-            const response = await axios.post('http://localhost:3001/api/fix-all', {
+            const response = await axios.post(API_ENDPOINTS.fixAll, {
                 sessionId: data.sessionId
             });
 
@@ -88,7 +89,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
     const downloadIssuesReport = async () => {
         try {
-            const response = await axios.get(`http://localhost:3001/api/download-issues/${data.sessionId}`, {
+            const response = await axios.get(API_ENDPOINTS.downloadIssues(data.sessionId), {
                 responseType: 'blob'
             });
 
@@ -109,7 +110,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
     const downloadChangesLog = async () => {
         try {
-            const response = await axios.get(`http://localhost:3001/api/download-changes/${data.sessionId}`, {
+            const response = await axios.get(API_ENDPOINTS.downloadChanges(data.sessionId), {
                 responseType: 'blob'
             });
 
