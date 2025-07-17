@@ -6,9 +6,398 @@ const path = require('path');
 const XLSX = require('xlsx');
 const csv = require('csv-parser');
 const { Transform } = require('stream');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Initialize SQLite database for learning system
+const dbPath = path.join(__dirname, 'learning_data.sqlite');
+const db = new sqlite3.Database(dbPath);
+
+// Initialize learning database tables
+db.serialize(() => {
+    // Override patterns table
+    db.run(`CREATE TABLE IF NOT EXISTS override_patterns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_value TEXT NOT NULL,
+        suggested_fix TEXT NOT NULL,
+        user_override TEXT NOT NULL,
+        column_name TEXT,
+        column_type TEXT,
+        problem_type TEXT,
+        character_pattern TEXT,
+        language_context TEXT,
+        frequency_count INTEGER DEFAULT 1,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Learning insights table for aggregated patterns
+    db.run(`CREATE TABLE IF NOT EXISTS learning_insights (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern_type TEXT NOT NULL,
+        pattern_key TEXT NOT NULL,
+        suggested_improvement TEXT NOT NULL,
+        confidence_score REAL DEFAULT 0.0,
+        usage_count INTEGER DEFAULT 0,
+        success_rate REAL DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(pattern_type, pattern_key)
+    )`);
+
+    // Character mappings table for individual character replacement rules
+    db.run(`CREATE TABLE IF NOT EXISTS character_mappings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_char TEXT NOT NULL,
+        to_char TEXT NOT NULL,
+        char_type TEXT,
+        usage_count INTEGER DEFAULT 1,
+        confidence_score REAL DEFAULT 1.0,
+        last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(from_char, to_char)
+    )`);
+
+    console.log('Learning database initialized successfully');
+});
+
+// Learning Analytics Functions
+const learningAnalytics = {
+    // Store an override pattern for learning
+    storeOverridePattern: (originalValue, suggestedFix, userOverride, context) => {
+        return new Promise((resolve, reject) => {
+            const {
+                columnName = '',
+                columnType = '',
+                problemType = '',
+                characterPattern = '',
+                languageContext = ''
+            } = context;
+
+            // Extract detailed patterns
+            const patterns = extractLearningPatterns(originalValue);
+
+            // Check if this exact pattern exists
+            db.get(
+                `SELECT id, frequency_count FROM override_patterns 
+                 WHERE original_value = ? AND suggested_fix = ? AND user_override = ? 
+                 AND column_name = ? AND problem_type = ?`,
+                [originalValue, suggestedFix, userOverride, columnName, problemType],
+                (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (row) {
+                        // Update existing pattern
+                        db.run(
+                            `UPDATE override_patterns 
+                             SET frequency_count = frequency_count + 1, last_seen = CURRENT_TIMESTAMP 
+                             WHERE id = ?`,
+                            [row.id],
+                            (err) => {
+                                if (err) reject(err);
+                                else resolve({ action: 'updated', id: row.id });
+                            }
+                        );
+                    } else {
+                        // Insert new pattern
+                        db.run(
+                            `INSERT INTO override_patterns 
+                             (original_value, suggested_fix, user_override, column_name, column_type, 
+                              problem_type, character_pattern, language_context) 
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [originalValue, suggestedFix, userOverride, columnName, columnType,
+                                problemType, characterPattern, languageContext],
+                            function (err) {
+                                if (err) {
+                                    reject(err);
+                                    return;
+                                }
+
+                                // Store individual character mappings
+                                if (patterns.characterMappings.length > 0) {
+                                    patterns.characterMappings.forEach(mapping => {
+                                        if (mapping.to) {
+                                            db.run(
+                                                `INSERT OR REPLACE INTO character_mappings 
+                                                 (from_char, to_char, char_type, usage_count, last_seen) 
+                                                 VALUES (?, ?, ?, COALESCE((SELECT usage_count FROM character_mappings WHERE from_char = ? AND to_char = ?), 0) + 1, CURRENT_TIMESTAMP)`,
+                                                [mapping.from, mapping.to, mapping.type, mapping.from, mapping.to],
+                                                (err) => {
+                                                    if (err) console.error('Error storing character mapping:', err);
+                                                }
+                                            );
+                                        }
+                                    });
+                                }
+
+                                resolve({ action: 'created', id: this.lastID });
+                            }
+                        );
+                    }
+                }
+            );
+        });
+    },
+
+    // Analyze patterns and generate learning insights
+    analyzePatterns: () => {
+        return new Promise((resolve, reject) => {
+            const insights = [];
+
+            // 1. Find exact value matches (full original → full fix)
+            db.all(
+                `SELECT original_value, user_override, COUNT(*) as count,
+                        AVG(frequency_count) as avg_frequency,
+                        MAX(column_name) as sample_column
+                 FROM override_patterns 
+                 GROUP BY original_value, user_override 
+                 HAVING count >= 2
+                 ORDER BY count DESC, avg_frequency DESC`,
+                [],
+                (err, exactRows) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    exactRows.forEach(row => {
+                        insights.push({
+                            type: 'exact_value_match',
+                            pattern: row.original_value.length > 50 ?
+                                row.original_value.substring(0, 47) + '...' :
+                                row.original_value,
+                            fullPattern: row.original_value,
+                            suggestion: row.user_override,
+                            confidence: Math.min(row.count * 0.3, 1.0),
+                            usage_count: row.count,
+                            sample_column: row.sample_column
+                        });
+                    });
+
+                    // 2. Find character mapping patterns
+                    db.all(
+                        `SELECT from_char, to_char, char_type, usage_count, confidence_score
+                         FROM character_mappings 
+                         WHERE usage_count >= 2
+                         ORDER BY usage_count DESC, confidence_score DESC`,
+                        [],
+                        (err, charRows) => {
+                            if (err) {
+                                reject(err);
+                                return;
+                            }
+
+                            charRows.forEach(row => {
+                                insights.push({
+                                    type: 'character_mapping',
+                                    pattern: `${row.from_char} → ${row.to_char}`,
+                                    suggestion: `Replace '${row.from_char}' with '${row.to_char}'`,
+                                    confidence: Math.min(row.usage_count * 0.2, 1.0),
+                                    usage_count: row.usage_count,
+                                    char_type: row.char_type
+                                });
+                            });
+
+                            // 3. Find character sequence patterns (legacy)
+                            db.all(
+                                `SELECT character_pattern, COUNT(DISTINCT user_override) as fix_variety,
+                                        COUNT(*) as count, GROUP_CONCAT(user_override, ' | ') as fixes
+                                 FROM override_patterns 
+                                 WHERE character_pattern != '' AND LENGTH(character_pattern) >= 3
+                                 GROUP BY character_pattern 
+                                 HAVING count >= 2
+                                 ORDER BY count DESC`,
+                                [],
+                                (err, patternRows) => {
+                                    if (err) {
+                                        reject(err);
+                                        return;
+                                    }
+
+                                    patternRows.forEach(row => {
+                                        // Only include if there's consistency in fixes
+                                        if (row.fix_variety <= 3) {
+                                            // Extract what the characters were replaced with by analyzing the pattern
+                                            const originalPattern = row.character_pattern;
+                                            const fixes = row.fixes.split(' | ');
+
+                                            // Find the most common replacement pattern
+                                            let replacementDescription = "These characters are typically removed or replaced with standard ASCII equivalents";
+
+                                            // Try to determine if they're consistently removed vs replaced
+                                            const allFixes = fixes.join(' ');
+                                            if (allFixes.toLowerCase().includes('andar') || allFixes.toLowerCase().includes('avenue')) {
+                                                replacementDescription = "These characters are typically removed (appear in address/location data)";
+                                            }
+
+                                            insights.push({
+                                                type: 'character_sequence',
+                                                pattern: row.character_pattern,
+                                                suggestion: replacementDescription,
+                                                confidence: Math.min((row.count / row.fix_variety) * 0.15, 0.7),
+                                                usage_count: row.count,
+                                                fix_variety: row.fix_variety,
+                                                example_contexts: fixes.slice(0, 3) // Show up to 3 examples
+                                            });
+                                        }
+                                    });
+
+                                    // 4. Find column-specific patterns
+                                    db.all(
+                                        `SELECT column_name, column_type, problem_type, 
+                                                COUNT(DISTINCT user_override) as fix_variety,
+                                                COUNT(*) as count, AVG(frequency_count) as avg_frequency,
+                                                GROUP_CONCAT(user_override, ' | ') as fixes
+                                         FROM override_patterns 
+                                         WHERE column_name != '' 
+                                         GROUP BY column_name, problem_type 
+                                         HAVING count >= 2
+                                         ORDER BY count DESC`,
+                                        [],
+                                        (err, columnRows) => {
+                                            if (err) {
+                                                reject(err);
+                                                return;
+                                            }
+
+                                            columnRows.forEach(row => {
+                                                insights.push({
+                                                    type: 'column_specific',
+                                                    pattern: `${row.column_name}: ${row.problem_type}`,
+                                                    suggestion: row.fixes.split(' | ')[0], // Most common fix
+                                                    confidence: Math.min(row.count * 0.15, 0.9),
+                                                    usage_count: row.count,
+                                                    column_name: row.column_name,
+                                                    problem_type: row.problem_type,
+                                                    fix_variety: row.fix_variety
+                                                });
+                                            });
+
+                                            resolve(insights);
+                                        }
+                                    );
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        });
+    },
+
+    // Get enhanced suggestions based on learned patterns
+    getEnhancedSuggestion: (originalValue, columnName, problemType, defaultSuggestion) => {
+        return new Promise((resolve, reject) => {
+            // Look for exact matches first
+            db.get(
+                `SELECT user_override, frequency_count, 
+                        (frequency_count * 1.0) as confidence_score
+                 FROM override_patterns 
+                 WHERE original_value = ? AND column_name = ? AND problem_type = ?
+                 ORDER BY frequency_count DESC LIMIT 1`,
+                [originalValue, columnName, problemType],
+                (err, exactMatch) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    if (exactMatch && exactMatch.frequency_count >= 2) {
+                        resolve({
+                            suggestion: exactMatch.user_override,
+                            confidence: Math.min(exactMatch.confidence_score * 0.3, 1.0),
+                            reason: 'Exact match from user overrides',
+                            learned: true
+                        });
+                        return;
+                    }
+
+                    // Look for similar patterns
+                    db.all(
+                        `SELECT user_override, COUNT(*) as pattern_count,
+                                AVG(frequency_count) as avg_frequency
+                         FROM override_patterns 
+                         WHERE (column_name = ? AND problem_type = ?) 
+                            OR (character_pattern LIKE '%' || ? || '%')
+                         GROUP BY user_override 
+                         ORDER BY pattern_count DESC, avg_frequency DESC 
+                         LIMIT 3`,
+                        [columnName, problemType, originalValue.substring(0, 10)],
+                        (err, similarPatterns) => {
+                            if (err) {
+                                reject(err);
+                                return;
+                            }
+
+                            if (similarPatterns.length > 0 && similarPatterns[0].pattern_count >= 2) {
+                                resolve({
+                                    suggestion: similarPatterns[0].user_override,
+                                    confidence: Math.min(similarPatterns[0].pattern_count * 0.1, 0.7),
+                                    reason: 'Similar pattern from user overrides',
+                                    learned: true,
+                                    alternatives: similarPatterns.slice(1).map(p => p.user_override)
+                                });
+                            } else {
+                                resolve({
+                                    suggestion: defaultSuggestion,
+                                    confidence: 0.5,
+                                    reason: 'Default algorithm',
+                                    learned: false
+                                });
+                            }
+                        }
+                    );
+                }
+            );
+        });
+    },
+
+    // Get learning statistics
+    getLearningStats: () => {
+        return new Promise((resolve, reject) => {
+            db.all(
+                `SELECT 
+                    COUNT(*) as total_patterns,
+                    COUNT(DISTINCT column_name) as unique_columns,
+                    COUNT(DISTINCT problem_type) as unique_problems,
+                    SUM(frequency_count) as total_overrides,
+                    AVG(frequency_count) as avg_frequency_per_pattern,
+                    MAX(last_seen) as last_learning_date
+                 FROM override_patterns`,
+                [],
+                (err, stats) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+
+                    db.all(
+                        `SELECT problem_type, COUNT(*) as count 
+                         FROM override_patterns 
+                         GROUP BY problem_type 
+                         ORDER BY count DESC`,
+                        [],
+                        (err, problemBreakdown) => {
+                            if (err) {
+                                reject(err);
+                                return;
+                            }
+
+                            resolve({
+                                summary: stats[0],
+                                problemBreakdown: problemBreakdown
+                            });
+                        }
+                    );
+                }
+            );
+        });
+    }
+};
 
 // Memory management
 process.on('warning', (warning) => {
@@ -56,6 +445,35 @@ const forceGC = () => {
         global.gc();
     }
 };
+
+// Cleanup function to remove old files and sessions
+const cleanupOldSessions = async () => {
+    const now = Date.now();
+    const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+    for (const [sessionId, session] of sessionData.entries()) {
+        const sessionAge = now - parseInt(sessionId);
+        if (sessionAge > maxAge) {
+            // Remove old file if it still exists
+            if (session.filePath && await fs.pathExists(session.filePath)) {
+                try {
+                    await fs.remove(session.filePath);
+                    console.log(`Cleaned up old file: ${session.filePath}`);
+                } catch (error) {
+                    console.error(`Error cleaning up file ${session.filePath}:`, error);
+                }
+            }
+            // Remove session from memory
+            sessionData.delete(sessionId);
+            console.log(`Cleaned up old session: ${sessionId}`);
+        }
+    }
+
+    forceGC(); // Force garbage collection after cleanup
+};
+
+// Run cleanup every 6 hours
+setInterval(cleanupOldSessions, 6 * 60 * 60 * 1000);
 
 // Excel-style column name generator
 const getExcelColumnName = (columnIndex) => {
@@ -188,9 +606,181 @@ const fixInvalidCharacters = (text) => {
     return fixedText.trim();
 };
 
+// Enhanced fix suggestion using learning system
+const getEnhancedFixSuggestion = async (originalValue, columnName, problemType) => {
+    try {
+        // Get default suggestion
+        let defaultSuggestion = originalValue;
+
+        // Apply character fixes if needed
+        if (problemType.includes('Invalid characters')) {
+            defaultSuggestion = fixInvalidCharacters(defaultSuggestion);
+        }
+
+        // Apply length truncation if needed
+        if (problemType.includes('Length exceeds')) {
+            defaultSuggestion = truncateText(defaultSuggestion);
+        }
+
+        // Get enhanced suggestion from learning system
+        const enhancedResult = await learningAnalytics.getEnhancedSuggestion(
+            originalValue,
+            columnName,
+            problemType,
+            defaultSuggestion
+        );
+
+        return enhancedResult;
+    } catch (error) {
+        console.error('Error getting enhanced suggestion:', error);
+        // Fallback to default logic
+        let fallbackSuggestion = originalValue;
+        if (problemType.includes('Invalid characters')) {
+            fallbackSuggestion = fixInvalidCharacters(fallbackSuggestion);
+        }
+        if (problemType.includes('Length exceeds')) {
+            fallbackSuggestion = truncateText(fallbackSuggestion);
+        }
+
+        return {
+            suggestion: fallbackSuggestion,
+            confidence: 0.5,
+            reason: 'Default algorithm (learning system unavailable)',
+            learned: false
+        };
+    }
+};
+
+// Extract context for learning
+const extractLearningContext = (issue) => {
+    const context = {
+        columnName: issue.column,
+        columnType: detectColumnType(issue.column),
+        problemType: issue.problem,
+        characterPattern: extractCharacterPattern(issue.originalValue),
+        languageContext: detectLanguageContext(issue.originalValue)
+    };
+    return context;
+};
+
+// Detect column type based on name
+const detectColumnType = (columnName) => {
+    const lowerName = columnName.toLowerCase();
+    if (lowerName.includes('name')) return 'name';
+    if (lowerName.includes('address')) return 'address';
+    if (lowerName.includes('city') || lowerName.includes('state') || lowerName.includes('country')) return 'location';
+    if (lowerName.includes('email')) return 'email';
+    if (lowerName.includes('phone')) return 'phone';
+    if (lowerName.includes('zip') || lowerName.includes('postal')) return 'postal_code';
+    return 'general';
+};
+
+// Extract multiple types of patterns for learning
+const extractLearningPatterns = (text) => {
+    const invalidChars = findInvalidCharacters(text);
+
+    return {
+        // Character sequence pattern (first 10 invalid characters)
+        characterPattern: invalidChars.map(c => c.char).slice(0, 10).join(''),
+
+        // Character types pattern (more general)
+        characterTypePattern: invalidChars.slice(0, 10).map(c => {
+            if (accentMap.has(c.char)) return 'ACCENT';
+            if (c.charCode >= 0x2000 && c.charCode <= 0x206F) return 'PUNCT';
+            if (c.charCode >= 0x0000 && c.charCode <= 0x001F) return 'CTRL';
+            return 'INVALID';
+        }).join(''),
+
+        // Full value pattern (for exact matching)
+        fullValuePattern: text,
+
+        // Prefix/suffix patterns (first/last 20 chars for partial matching)
+        prefixPattern: text.substring(0, 20),
+        suffixPattern: text.length > 20 ? text.substring(text.length - 20) : text,
+
+        // Individual character mappings
+        characterMappings: invalidChars.map(c => ({
+            from: c.char,
+            to: accentMap.get(c.char) || '',
+            position: c.position,
+            type: c.description
+        }))
+    };
+};
+
+// Legacy function for backward compatibility
+const extractCharacterPattern = (text) => {
+    const patterns = extractLearningPatterns(text);
+    return patterns.characterPattern;
+};
+
+// Detect language context
+const detectLanguageContext = (text) => {
+    // Simple language detection based on character patterns
+    if (/[àáâãäåæçèéêëìíîïñòóôõöøùúûüý]/i.test(text)) {
+        if (/[ñ]/i.test(text)) return 'spanish';
+        if (/[ç]/i.test(text)) return 'french';
+        if (/[ø]/i.test(text)) return 'scandinavian';
+        return 'romance_language';
+    }
+    if (/[äöüß]/i.test(text)) return 'german';
+    if (/[ąćęłńóśźż]/i.test(text)) return 'polish';
+    return 'unknown';
+};
+
 const truncateText = (text, maxLength = 100) => {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength).trim();
+};
+
+// Enhance suggestions with learned patterns (post-analysis)
+const enhanceSuggestionsWithLearning = async (issues) => {
+    const enhancedIssues = [];
+
+    console.log(`Enhancing ${issues.length} suggestions with learned patterns...`);
+
+    for (const issue of issues) {
+        try {
+            const enhancedResult = await getEnhancedFixSuggestion(
+                issue.originalValue,
+                issue.column,
+                issue.problem
+            );
+
+            // Use learned suggestion if confidence is high enough
+            if (enhancedResult.learned && enhancedResult.confidence > 0.6) {
+                enhancedIssues.push({
+                    ...issue,
+                    suggestedFix: enhancedResult.suggestion,
+                    confidence: enhancedResult.confidence,
+                    learned: true,
+                    reason: enhancedResult.reason
+                });
+                console.log(`Enhanced: "${issue.originalValue}" → "${enhancedResult.suggestion}" (${enhancedResult.confidence.toFixed(2)} confidence)`);
+            } else {
+                enhancedIssues.push({
+                    ...issue,
+                    confidence: 0.5,
+                    learned: false,
+                    reason: 'Default algorithm'
+                });
+            }
+        } catch (error) {
+            console.error('Error enhancing suggestion:', error);
+            // Fallback to original suggestion if learning fails
+            enhancedIssues.push({
+                ...issue,
+                confidence: 0.5,
+                learned: false,
+                reason: 'Default algorithm (learning unavailable)'
+            });
+        }
+    }
+
+    const learnedCount = enhancedIssues.filter(i => i.learned).length;
+    console.log(`Enhanced ${learnedCount}/${issues.length} suggestions using learned patterns`);
+
+    return enhancedIssues;
 };
 
 // Streaming CSV analysis function
@@ -485,6 +1075,16 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         console.log(`Analysis complete: ${totalRows} rows, ${totalColumns} columns, ${analysisResult.issues.length} issues found in ${parseTime}ms`);
         console.log(`Memory after processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
+        // Enhance suggestions with learned patterns
+        console.log('Enhancing suggestions with learned patterns...');
+        const enhancementStartTime = Date.now();
+        const enhancedIssues = await enhanceSuggestionsWithLearning(analysisResult.issues);
+        const enhancementTime = Date.now() - enhancementStartTime;
+        console.log(`Enhanced suggestions in ${enhancementTime}ms`);
+
+        // Update analysis result with enhanced suggestions
+        analysisResult.issues = enhancedIssues;
+
         // Generate session ID and store minimal data (no original data stored)
         const sessionId = Date.now().toString();
         sessionData.set(sessionId, {
@@ -498,8 +1098,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             uploadTime: new Date().toISOString()
         });
 
-        // Clean up uploaded file immediately to save disk space
-        await fs.remove(filePath);
+        // DON'T delete the uploaded file immediately - keep it for generating fixed CSV
+        // We'll clean it up later with a scheduled cleanup or when session expires
 
         const totalTime = Date.now() - startTime;
         console.log(`Processing complete in ${totalTime}ms. Found ${analysisResult.issues.length} issues.`);
@@ -545,9 +1145,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 });
 
 // Fix individual issue
-app.post('/api/fix-issue', (req, res) => {
+app.post('/api/fix-issue', async (req, res) => {
     try {
-        const { sessionId, issueId } = req.body;
+        const { sessionId, issueId, overriddenFix } = req.body;
 
         if (!sessionId || !issueId) {
             return res.status(400).json({ error: 'Session ID and Issue ID are required' });
@@ -568,12 +1168,33 @@ app.post('/api/fix-issue', (req, res) => {
             return res.status(400).json({ error: 'Issue already fixed' });
         }
 
+        // Store override in learning system if user provided a different fix
+        if (overriddenFix && overriddenFix !== issue.suggestedFix) {
+            try {
+                const context = extractLearningContext(issue);
+                await learningAnalytics.storeOverridePattern(
+                    issue.originalValue,
+                    issue.suggestedFix,
+                    overriddenFix,
+                    context
+                );
+                console.log(`Stored learning pattern: ${issue.originalValue} -> ${overriddenFix}`);
+            } catch (learningError) {
+                console.error('Error storing learning pattern:', learningError);
+                // Continue with fix even if learning storage fails
+            }
+        }
+
         // Mark issue as fixed and store the change
         issue.fixed = true;
+
         const fixedIssue = {
             ...issue,
+            // Use overridden fix if provided, otherwise use suggested fix
+            suggestedFix: overriddenFix || issue.suggestedFix,
             fixedAt: new Date().toISOString(),
-            changeId: `fix-${Date.now()}`
+            changeId: `fix-${Date.now()}`,
+            wasOverridden: !!overriddenFix
         };
 
         session.fixedIssues.push(fixedIssue);
@@ -588,6 +1209,59 @@ app.post('/api/fix-issue', (req, res) => {
         console.error('Error fixing issue:', error);
         res.status(500).json({
             error: 'Error fixing issue',
+            details: error.message
+        });
+    }
+});
+
+// Check which issues are new/unseen by the learning system
+app.post('/api/check-new-issues', async (req, res) => {
+    try {
+        const { sessionId } = req.body;
+
+        if (!sessionId) {
+            return res.status(400).json({ error: 'Session ID is required' });
+        }
+
+        const session = sessionData.get(sessionId);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const newIssueIds = [];
+
+        // Check each issue to see if it's been seen before
+        for (const issue of session.issues) {
+            try {
+                const enhancedResult = await learningAnalytics.getEnhancedSuggestion(
+                    issue.originalValue,
+                    issue.column,
+                    issue.problem,
+                    issue.suggestedFix
+                );
+
+                // If the result is not learned (confidence is low and no exact/similar patterns), it's new
+                if (!enhancedResult.learned || enhancedResult.confidence < 0.3) {
+                    newIssueIds.push(issue.id);
+                }
+            } catch (error) {
+                console.error('Error checking if issue is new:', error);
+                // If we can't check, assume it's new to be safe
+                newIssueIds.push(issue.id);
+            }
+        }
+
+        res.json({
+            success: true,
+            newIssueIds: newIssueIds,
+            totalIssues: session.issues.length,
+            newIssueCount: newIssueIds.length
+        });
+
+    } catch (error) {
+        console.error('Error checking new issues:', error);
+        res.status(500).json({
+            error: 'Error checking new issues',
             details: error.message
         });
     }
@@ -616,6 +1290,8 @@ app.post('/api/fix-all', (req, res) => {
 
         // Fix all issues
         const fixTime = new Date().toISOString();
+        const fixedIssuesArray = [];
+
         unfixedIssues.forEach(issue => {
             issue.fixed = true;
             const fixedIssue = {
@@ -624,11 +1300,13 @@ app.post('/api/fix-all', (req, res) => {
                 changeId: `fix-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
             };
             session.fixedIssues.push(fixedIssue);
+            fixedIssuesArray.push(fixedIssue);
         });
 
         res.json({
             success: true,
             fixedCount: unfixedIssues.length,
+            fixedIssues: fixedIssuesArray,
             message: `Fixed ${unfixedIssues.length} issues successfully`
         });
 
@@ -672,7 +1350,7 @@ app.get('/api/session/:sessionId', (req, res) => {
     }
 });
 
-// Download issues report
+// Download issues report (only unfixed issues)
 app.get('/api/download-issues/:sessionId', (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -682,12 +1360,16 @@ app.get('/api/download-issues/:sessionId', (req, res) => {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        // Create CSV content for issues
-        const headers = ['Row', 'Column', 'Problem', 'Original Value', 'Suggested Fix'];
+        // Filter for only unfixed issues
+        const unfixedIssues = session.issues.filter(issue => !issue.fixed);
+
+        // Create CSV content for unfixed issues
+        const headers = ['Cell Reference', 'Row', 'Column', 'Problem', 'Original Value', 'Suggested Fix'];
         const csvRows = [headers.join(',')];
 
-        session.issues.forEach(issue => {
+        unfixedIssues.forEach(issue => {
             const row = [
+                `"${issue.cellReference || `${issue.column}${issue.row}`}"`,
                 issue.row,
                 `"${issue.column}"`,
                 `"${issue.problem}"`,
@@ -713,7 +1395,7 @@ app.get('/api/download-issues/:sessionId', (req, res) => {
     }
 });
 
-// Download changes log
+// Download changes log (only fixed issues)
 app.get('/api/download-changes/:sessionId', (req, res) => {
     try {
         const { sessionId } = req.params;
@@ -728,11 +1410,12 @@ app.get('/api/download-changes/:sessionId', (req, res) => {
         }
 
         // Create CSV content for changes
-        const headers = ['Row', 'Column', 'Problem', 'Original Value', 'Fixed Value', 'Fixed At'];
+        const headers = ['Cell Reference', 'Row', 'Column', 'Problem', 'Original Value', 'Fixed Value', 'Fixed At'];
         const csvRows = [headers.join(',')];
 
         session.fixedIssues.forEach(change => {
             const row = [
+                `"${change.cellReference || `${change.column}${change.row}`}"`,
                 change.row,
                 `"${change.column}"`,
                 `"${change.problem}"`,
@@ -754,6 +1437,275 @@ app.get('/api/download-changes/:sessionId', (req, res) => {
         console.error('Error downloading changes log:', error);
         res.status(500).json({
             error: 'Error generating changes log',
+            details: error.message
+        });
+    }
+});
+
+// Download fixed CSV - original file with all fixes applied
+app.get('/api/download-fixed/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+
+        const session = sessionData.get(sessionId);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Check if original file still exists
+        if (!session.filePath || !await fs.pathExists(session.filePath)) {
+            return res.status(404).json({ error: 'Original file no longer available' });
+        }
+
+        // Create a map of fixes for quick lookup (key: row-column, value: fixed value)
+        const fixesMap = new Map();
+        session.fixedIssues.forEach(fixedIssue => {
+            const key = `${fixedIssue.row - 1}-${fixedIssue.column}`; // Convert to 0-based row index
+            fixesMap.set(key, fixedIssue.suggestedFix);
+        });
+
+        if (session.fileExtension === '.csv') {
+            // Handle CSV files
+            const results = [];
+            let headers = [];
+            let rowIndex = 0;
+
+            // Read the original CSV and apply fixes
+            await new Promise((resolve, reject) => {
+                fs.createReadStream(session.filePath)
+                    .pipe(csv())
+                    .on('headers', (headerList) => {
+                        headers = headerList;
+                    })
+                    .on('data', (data) => {
+                        // Apply fixes to this row
+                        const fixedRow = { ...data };
+                        headers.forEach((column) => {
+                            const key = `${rowIndex}-${column}`;
+                            if (fixesMap.has(key)) {
+                                fixedRow[column] = fixesMap.get(key);
+                            }
+                        });
+                        results.push(fixedRow);
+                        rowIndex++;
+                    })
+                    .on('end', resolve)
+                    .on('error', reject);
+            });
+
+            // Convert back to CSV format - preserve original compact format for empty cells
+            const csvRows = [headers.map(h => `"${h}"`).join(',')];
+            results.forEach(row => {
+                const csvRow = headers.map(header => {
+                    const value = row[header];
+                    // Only quote if value exists and needs quoting (contains comma, quote, or newline)
+                    if (value === null || value === undefined || value === '') {
+                        return ''; // Empty cell without quotes
+                    }
+                    const stringValue = String(value);
+                    if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
+                        return `"${stringValue.replace(/"/g, '""')}"`;
+                    }
+                    return stringValue; // No quotes needed for simple values
+                });
+                csvRows.push(csvRow.join(','));
+            });
+
+            const csvContent = csvRows.join('\n');
+            const filename = session.filename.replace(/\.[^/.]+$/, '_FIXED.csv');
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(csvContent);
+
+        } else if (session.fileExtension === '.xlsx' || session.fileExtension === '.xls') {
+            // Handle Excel files
+            const workbook = XLSX.readFile(session.filePath, { cellText: false, cellDates: true });
+            const firstSheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[firstSheetName];
+            const data = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+            // Apply fixes to the data
+            data.forEach((row, rowIndex) => {
+                Object.keys(row).forEach((column) => {
+                    const key = `${rowIndex}-${column}`;
+                    if (fixesMap.has(key)) {
+                        row[column] = fixesMap.get(key);
+                    }
+                });
+            });
+
+            // Convert back to CSV format for download - preserve original compact format for empty cells
+            const headers = Object.keys(data[0] || {});
+            const csvRows = [headers.map(h => `"${h}"`).join(',')];
+            data.forEach(row => {
+                const csvRow = headers.map(header => {
+                    const value = row[header];
+                    // Only quote if value exists and needs quoting (contains comma, quote, or newline)
+                    if (value === null || value === undefined || value === '') {
+                        return ''; // Empty cell without quotes
+                    }
+                    const stringValue = String(value);
+                    if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n') || stringValue.includes('\r')) {
+                        return `"${stringValue.replace(/"/g, '""')}"`;
+                    }
+                    return stringValue; // No quotes needed for simple values
+                });
+                csvRows.push(csvRow.join(','));
+            });
+
+            const csvContent = csvRows.join('\n');
+            const filename = session.filename.replace(/\.[^/.]+$/, '_FIXED.csv');
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.send(csvContent);
+        } else {
+            throw new Error('Unsupported file type');
+        }
+
+    } catch (error) {
+        console.error('Error downloading fixed CSV:', error);
+        res.status(500).json({
+            error: 'Error generating fixed CSV',
+            details: error.message
+        });
+    }
+});
+
+// Learning Analytics Endpoints
+
+// Get learning statistics
+app.get('/api/learning/stats', async (req, res) => {
+    try {
+        const stats = await learningAnalytics.getLearningStats();
+        res.json({
+            success: true,
+            ...stats
+        });
+    } catch (error) {
+        console.error('Error getting learning stats:', error);
+        res.status(500).json({
+            error: 'Error retrieving learning statistics',
+            details: error.message
+        });
+    }
+});
+
+// Get learning insights and patterns
+app.get('/api/learning/insights', async (req, res) => {
+    try {
+        const insights = await learningAnalytics.analyzePatterns();
+        res.json({
+            success: true,
+            insights: insights,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error getting learning insights:', error);
+        res.status(500).json({
+            error: 'Error retrieving learning insights',
+            details: error.message
+        });
+    }
+});
+
+// Get enhanced suggestion for testing
+app.post('/api/learning/suggest', async (req, res) => {
+    try {
+        const { originalValue, columnName, problemType } = req.body;
+
+        if (!originalValue || !columnName || !problemType) {
+            return res.status(400).json({
+                error: 'originalValue, columnName, and problemType are required'
+            });
+        }
+
+        const result = await getEnhancedFixSuggestion(originalValue, columnName, problemType);
+        res.json({
+            success: true,
+            originalValue: originalValue,
+            ...result
+        });
+    } catch (error) {
+        console.error('Error getting enhanced suggestion:', error);
+        res.status(500).json({
+            error: 'Error getting enhanced suggestion',
+            details: error.message
+        });
+    }
+});
+
+// Export learning data (for backup/analysis)
+app.get('/api/learning/export', (req, res) => {
+    try {
+        db.all(
+            `SELECT * FROM override_patterns ORDER BY last_seen DESC LIMIT 1000`,
+            [],
+            (err, rows) => {
+                if (err) {
+                    console.error('Error exporting learning data:', err);
+                    res.status(500).json({
+                        error: 'Error exporting learning data',
+                        details: err.message
+                    });
+                    return;
+                }
+
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Content-Disposition', 'attachment; filename="learning_data_export.json"');
+                res.json({
+                    export_date: new Date().toISOString(),
+                    total_patterns: rows.length,
+                    patterns: rows
+                });
+            }
+        );
+    } catch (error) {
+        console.error('Error exporting learning data:', error);
+        res.status(500).json({
+            error: 'Error exporting learning data',
+            details: error.message
+        });
+    }
+});
+
+// Train suggestions (manual trigger for retraining)
+app.post('/api/learning/train', async (req, res) => {
+    try {
+        console.log('Starting manual training of suggestion algorithm...');
+
+        // Analyze current patterns
+        const insights = await learningAnalytics.analyzePatterns();
+
+        // Update learning insights table
+        for (const insight of insights) {
+            await new Promise((resolve, reject) => {
+                db.run(
+                    `INSERT OR REPLACE INTO learning_insights 
+                     (pattern_type, pattern_key, suggested_improvement, confidence_score, usage_count, updated_at) 
+                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+                    [insight.type, insight.pattern, insight.suggestion, insight.confidence, insight.usage_count],
+                    (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    }
+                );
+            });
+        }
+
+        console.log(`Training complete. Updated ${insights.length} insights.`);
+
+        res.json({
+            success: true,
+            message: 'Training completed successfully',
+            insights_updated: insights.length,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Error during training:', error);
+        res.status(500).json({
+            error: 'Error during training',
             details: error.message
         });
     }

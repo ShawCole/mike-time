@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Configuration
-PROJECT_ID="your-project-id"
+PROJECT_ID="accupoint-solutions-dev"
 SERVICE_NAME="mike-time-backend"
 REGION="us-central1"
-IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
+IMAGE_NAME="us-central1-docker.pkg.dev/${PROJECT_ID}/mike-time-repo/${SERVICE_NAME}"
 
 echo "🚀 Deploying to Google Cloud Run..."
 
