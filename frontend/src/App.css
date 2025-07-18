@@ -1569,3 +1569,58 @@ body {
 .issue-card:has(.new-issue-success):hover {
   box-shadow: 0 6px 20px rgba(76, 175, 80, 0.25);
 }
+
+/* Change Override Styles */
+.overridden-change {
+  border-left: 4px solid #ff9800;
+  box-shadow: 0 4px 16px rgba(255, 152, 0, 0.15);
+}
+
+.overridden-change:hover {
+  box-shadow: 0 6px 20px rgba(255, 152, 0, 0.25);
+}
+
+.override-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.override-button {
+  background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s;
+  font-size: 0.875rem;
+}
+
+.override-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #f57c00 0%, #ef6c00 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
+}
+
+.override-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.change-card .value-display.hoverable {
+  cursor: pointer;
+  border: 2px dashed #ff9800;
+  transition: all 0.2s;
+}
+
+.change-card .value-display.hoverable:hover {
+  background-color: #fff3e0;
+  border-color: #f57c00;
+}

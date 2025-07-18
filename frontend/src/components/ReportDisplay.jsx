@@ -17,6 +17,11 @@ const ReportDisplay = ({ data, onReset }) => {
     const [newIssuesOverridden, setNewIssuesOverridden] = useState(new Set()); // Track new issues that have been overridden
     const [isCheckingNewIssues, setIsCheckingNewIssues] = useState(false);
 
+    // Change override state
+    const [hoveredChangeId, setHoveredChangeId] = useState(null); // Track which change is being hovered
+    const [editingChangeId, setEditingChangeId] = useState(null); // Track which change is being edited
+    const [overriddenChanges, setOverriddenChanges] = useState({}); // Track overridden changes by issue ID
+
     // Bulk override modal state
     const [showBulkOverrideModal, setShowBulkOverrideModal] = useState(false);
     const [bulkOverrideData, setBulkOverrideData] = useState({
@@ -276,12 +281,105 @@ const ReportDisplay = ({ data, onReset }) => {
         setEditingFixId(null);
     };
 
+
+
     const getSuggestedFix = (issue) => {
         return overriddenFixes[issue.id] || issue.suggestedFix;
     };
 
     const isFixOverridden = (issueId) => {
         return overriddenFixes[issueId] && overriddenFixes[issueId] !== issues.find(i => i.id === issueId)?.suggestedFix;
+    };
+
+    // Change override functions
+    const handleChangeEditStart = (issueId) => {
+        setEditingChangeId(issueId);
+    };
+
+    const handleChangeEditEnd = () => {
+        setEditingChangeId(null);
+    };
+
+    const handleChangeEdit = (issueId, newFix) => {
+        setOverriddenChanges(prev => ({
+            ...prev,
+            [issueId]: newFix
+        }));
+    };
+
+    const getFixedValue = (change) => {
+        return overriddenChanges[change.id] || change.suggestedFix;
+    };
+
+    const isChangeOverridden = (changeId) => {
+        return overriddenChanges[changeId] && overriddenChanges[changeId] !== changes.find(c => c.id === changeId)?.suggestedFix;
+    };
+
+    const handleOverrideChange = async (change) => {
+        try {
+            const overriddenFix = getFixedValue(change);
+
+            // Store the override pattern for learning
+            const response = await axios.post(API_ENDPOINTS.fixIssue, {
+                sessionId: data.sessionId,
+                issueId: change.id,
+                overriddenFix: overriddenFix
+            });
+
+            if (response.data.success) {
+                // Update the change in the changes list
+                setChanges(prevChanges =>
+                    prevChanges.map(c =>
+                        c.id === change.id ? { ...c, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() } : c
+                    )
+                );
+
+                // Update the corresponding issue in issues list  
+                setIssues(prevIssues =>
+                    prevIssues.map(issue =>
+                        issue.id === change.id ? { ...issue, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() } : issue
+                    )
+                );
+
+                // Clear the override and editing state
+                setOverriddenChanges(prev => {
+                    const newState = { ...prev };
+                    delete newState[change.id];
+                    return newState;
+                });
+                setEditingChangeId(null);
+
+                // Check for similar fixes if this is an override
+                if (isChangeOverridden(change.id)) {
+                    checkForSimilarFixes(change, overriddenFix, true);
+                }
+            }
+        } catch (error) {
+            console.error('Error overriding change:', error);
+            alert('Failed to override change. Please try again.');
+        }
+    };
+
+    const checkForSimilarFixes = async (currentChange, newFix, isOverride = false) => {
+        const originalFix = currentChange.suggestedFix;
+
+        // Find other changes with the same original value and current suggested fix
+        const similarChanges = changes.filter(change =>
+            change.id !== currentChange.id &&
+            change.originalValue === currentChange.originalValue &&
+            change.suggestedFix === originalFix
+        );
+
+        if (similarChanges.length > 0) {
+            setBulkOverrideData({
+                currentIssue: currentChange,
+                similarIssues: similarChanges,
+                originalFix: originalFix,
+                overriddenFix: newFix,
+                isOverrideMode: isOverride
+            });
+            setShowBulkOverrideModal(true);
+        }
     };
 
     const handleFixAll = async () => {
@@ -547,8 +645,8 @@ const ReportDisplay = ({ data, onReset }) => {
                                 <div className="issues-container">
                                     {paginatedData.map((item, index) => (
                                         showChanges ? (
-                                            // Changes Display
-                                            <div key={`change-${item.id}-${index}`} className="issue-card change-card">
+                                            // Changes Display with Override Functionality
+                                            <div key={`change-${item.id}-${index}`} className={`issue-card change-card ${isChangeOverridden(item.id) ? 'overridden-change' : ''}`}>
                                                 <div className="issue-header">
                                                     <span className="issue-location">
                                                         Cell {item.cellReference || `${item.column}${item.row}`} • Column: {item.column}
@@ -564,13 +662,62 @@ const ReportDisplay = ({ data, onReset }) => {
                                                     </div>
                                                     <div className="change-arrow">→</div>
                                                     <div className="change-after">
-                                                        <label>Fixed:</label>
-                                                        <div className="value-display fixed-value">{item.suggestedFix}</div>
+                                                        <label
+                                                            onMouseEnter={() => setHoveredChangeId(item.id)}
+                                                            onMouseLeave={() => setHoveredChangeId(null)}
+                                                        >
+                                                            {editingChangeId === item.id ? 'Overriding Fix:' :
+                                                                isChangeOverridden(item.id) ? 'Overridden Fix:' :
+                                                                    (hoveredChangeId === item.id && !editingChangeId ? 'Override?' : 'Fixed:')}
+                                                        </label>
+                                                        <div
+                                                            className={`value-display fixed-value ${hoveredChangeId === item.id ? 'hoverable' : ''}`}
+                                                            onMouseEnter={() => setHoveredChangeId(item.id)}
+                                                            onMouseLeave={() => setHoveredChangeId(null)}
+                                                            onClick={() => {
+                                                                if (!editingChangeId) {
+                                                                    handleChangeEditStart(item.id);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {editingChangeId === item.id ? (
+                                                                <input
+                                                                    type="text"
+                                                                    value={getFixedValue(item)}
+                                                                    onChange={(e) => handleChangeEdit(item.id, e.target.value)}
+                                                                    onBlur={handleChangeEditEnd}
+                                                                    onKeyPress={(e) => {
+                                                                        if (e.key === 'Enter') {
+                                                                            handleChangeEditEnd();
+                                                                        }
+                                                                    }}
+                                                                    autoFocus
+                                                                    className="edit-fix-input"
+                                                                />
+                                                            ) : (
+                                                                getFixedValue(item)
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 {item.problem && (
                                                     <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#718096' }}>
                                                         <strong>Issue:</strong> {item.problem}
+                                                    </div>
+                                                )}
+
+                                                {/* Override Button - Only show when editing or value is overridden */}
+                                                {(editingChangeId === item.id || isChangeOverridden(item.id)) && (
+                                                    <div className="actions-and-warning-container">
+                                                        <div className="override-actions">
+                                                            <button
+                                                                className="btn btn-warning override-button"
+                                                                onClick={() => handleOverrideChange(item)}
+                                                                disabled={editingChangeId === item.id && !getFixedValue(item)}
+                                                            >
+                                                                ⚠️ Override
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>
