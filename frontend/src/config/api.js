@@ -3,6 +3,8 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 export const API_ENDPOINTS = {
     upload: `${API_BASE_URL}/api/upload`,
+    getUploadUrl: `${API_BASE_URL}/api/get-upload-url`,
+    processFromStorage: `${API_BASE_URL}/api/process-from-storage`,
     fixIssue: `${API_BASE_URL}/api/fix-issue`,
     fixAll: `${API_BASE_URL}/api/fix-all`,
     checkNewIssues: `${API_BASE_URL}/api/check-new-issues`,

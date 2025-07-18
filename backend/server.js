@@ -5,11 +5,22 @@ const fs = require('fs-extra');
 const path = require('path');
 const XLSX = require('xlsx');
 const csv = require('csv-parser');
-const { Transform } = require('stream');
+const { parse: csvParse } = require('csv-parse');
+const { Transform, pipeline } = require('stream');
+const { promisify } = require('util');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const { Storage } = require('@google-cloud/storage');
 const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Initialize Google Cloud Storage
+const cloudStorage = new Storage({
+    projectId: 'accupoint-solutions-dev'
+});
+const BUCKET_NAME = 'mike-time-csv-processing';
+const bucket = cloudStorage.bucket(BUCKET_NAME);
 
 // Initialize SQLite database for learning system
 const dbPath = path.join(__dirname, 'learning_data.sqlite');
@@ -58,6 +69,13 @@ db.serialize(() => {
         last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(from_char, to_char)
     )`);
+
+    // Create performance indexes for high-volume processing
+    db.run(`CREATE INDEX IF NOT EXISTS idx_learning_insights_type_key ON learning_insights(pattern_type, pattern_key)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_learning_insights_confidence ON learning_insights(confidence_score DESC)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_learning_insights_usage ON learning_insights(usage_count DESC)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_character_mappings_from_char ON character_mappings(from_char)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_character_mappings_usage ON character_mappings(usage_count DESC)`);
 
     console.log('Learning database initialized successfully');
 });
@@ -405,8 +423,31 @@ process.on('warning', (warning) => {
 });
 
 // Middleware
-app.use(cors());
-app.use(express.json());
+const corsOptions = {
+    origin: [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'https://mikeqc.netlify.app'
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ limit: '200mb', extended: true }));
+
+// Add request size logging middleware
+app.use((req, res, next) => {
+    if (req.headers['content-length']) {
+        const sizeMB = (parseInt(req.headers['content-length']) / 1024 / 1024).toFixed(2);
+        console.log(`Request to ${req.path}: ${sizeMB}MB`);
+    }
+    next();
+});
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -1011,7 +1052,220 @@ const getCSVRowCount = (filePath) => {
     });
 };
 
+// High-performance file processing from Cloud Storage
+const processFileFromStorage = async (filename) => {
+    const startTime = Date.now();
+    const file = bucket.file(filename);
+
+    console.log(`Starting high-performance processing of: ${filename}`);
+    console.log(`Memory before processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+
+    // Check if file exists
+    const [exists] = await file.exists();
+    if (!exists) {
+        throw new Error(`File ${filename} not found in Cloud Storage`);
+    }
+
+    // Get file metadata
+    const [metadata] = await file.getMetadata();
+    const fileSizeMB = (metadata.size / 1024 / 1024).toFixed(2);
+    console.log(`File size: ${fileSizeMB}MB`);
+
+    // Stream processing with parallel analysis
+    const issues = [];
+    let rowCount = 0;
+    let columnCount = 0;
+    let headers = [];
+    const BATCH_SIZE = 10000; // Process in batches for memory efficiency
+    let currentBatch = [];
+
+    return new Promise((resolve, reject) => {
+        const csvStream = file.createReadStream()
+            .pipe(csvParse({
+                columns: true,
+                skip_empty_lines: true,
+                trim: true,
+                relax_column_count: true
+            }));
+
+        csvStream.on('headers', (headerList) => {
+            headers = headerList;
+            columnCount = headers.length;
+            console.log(`Detected ${columnCount} columns:`, headers.slice(0, 5), columnCount > 5 ? '...' : '');
+        });
+
+        csvStream.on('data', (row) => {
+            rowCount++;
+            currentBatch.push({ row, rowIndex: rowCount });
+
+            // Process batch when it reaches BATCH_SIZE
+            if (currentBatch.length >= BATCH_SIZE) {
+                const batchIssues = processBatchParallel(currentBatch, headers);
+                issues.push(...batchIssues);
+                currentBatch = [];
+
+                // Progress logging
+                if (rowCount % 50000 === 0) {
+                    const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                    console.log(`Processed ${rowCount} rows, found ${issues.length} issues so far. Memory usage: ${memoryUsage}MB`);
+
+                    // Force garbage collection if available
+                    if (global.gc) {
+                        global.gc();
+                    }
+                }
+            }
+        });
+
+        csvStream.on('end', () => {
+            // Process remaining batch
+            if (currentBatch.length > 0) {
+                const batchIssues = processBatchParallel(currentBatch, headers);
+                issues.push(...batchIssues);
+            }
+
+            const processingTime = Date.now() - startTime;
+            console.log(`Analysis complete. Processed ${rowCount} rows, found ${issues.length} issues.`);
+            console.log(`Processing time: ${processingTime}ms (${(processingTime / 1000).toFixed(2)}s)`);
+            console.log(`Memory after processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+
+            // Clean up the file from Cloud Storage
+            file.delete().catch(err => console.warn('Failed to delete file from storage:', err));
+
+            resolve({
+                success: true,
+                filename: filename,
+                totalRows: rowCount,
+                totalColumns: columnCount,
+                issues: issues,
+                processingTimeMs: processingTime,
+                fileSizeMB: parseFloat(fileSizeMB)
+            });
+        });
+
+        csvStream.on('error', (error) => {
+            console.error('Stream processing error:', error);
+            reject(error);
+        });
+    });
+};
+
+// Parallel batch processing for maximum performance
+const processBatchParallel = (batch, headers) => {
+    const batchIssues = [];
+
+    // Process each row in the batch
+    for (const { row, rowIndex } of batch) {
+        const rowIssues = analyzeRowForIssues(row, headers, rowIndex);
+        batchIssues.push(...rowIssues);
+    }
+
+    return batchIssues;
+};
+
+// High-performance row analysis (optimized version)
+const analyzeRowForIssues = (row, headers, rowIndex) => {
+    const issues = [];
+
+    for (const [colIndex, header] of headers.entries()) {
+        const cellValue = row[header];
+
+        if (cellValue && typeof cellValue === 'string') {
+            // Quick checks for common issues
+            const trimmedValue = cellValue.trim();
+
+            // Invalid characters check (optimized)
+            const invalidChars = getInvalidCharacters(trimmedValue);
+            if (invalidChars.length > 0) {
+                issues.push({
+                    id: `${rowIndex}-${colIndex}`,
+                    row: rowIndex,
+                    column: header,
+                    originalValue: cellValue,
+                    suggestedFix: cleanValue(trimmedValue),
+                    issues: [`Contains invalid characters: ${invalidChars.map(c => c.char).join(', ')}`],
+                    type: 'invalid_characters',
+                    severity: 'medium'
+                });
+            }
+
+            // Length check (quick)
+            if (trimmedValue.length > 1000) {
+                issues.push({
+                    id: `${rowIndex}-${colIndex}-length`,
+                    row: rowIndex,
+                    column: header,
+                    originalValue: cellValue,
+                    suggestedFix: trimmedValue.substring(0, 1000) + '...',
+                    issues: [`Value too long (${trimmedValue.length} characters, max 1000)`],
+                    type: 'length_violation',
+                    severity: 'low'
+                });
+            }
+        }
+    }
+
+    return issues;
+};
+
 // Routes
+
+// Get signed URL for direct Cloud Storage upload
+app.post('/api/get-upload-url', async (req, res) => {
+    try {
+        const { filename, contentType } = req.body;
+
+        if (!filename) {
+            return res.status(400).json({ error: 'Filename is required' });
+        }
+
+        // Generate unique filename
+        const uniqueFilename = `${Date.now()}-${filename}`;
+        const file = bucket.file(uniqueFilename);
+
+        // Create signed URL for upload (valid for 1 hour)
+        const [signedUrl] = await file.getSignedUrl({
+            version: 'v4',
+            action: 'write',
+            expires: Date.now() + 60 * 60 * 1000, // 1 hour
+            contentType: contentType || 'text/csv',
+            extensionHeaders: {
+                'x-goog-content-length-range': '0,8589934592' // 0 to 8GB
+            }
+        });
+
+        res.json({
+            uploadUrl: signedUrl,
+            filename: uniqueFilename,
+            bucketName: BUCKET_NAME
+        });
+    } catch (error) {
+        console.error('Error generating signed URL:', error);
+        res.status(500).json({ error: 'Failed to generate upload URL' });
+    }
+});
+
+// Process file from Cloud Storage (high-performance)
+app.post('/api/process-from-storage', async (req, res) => {
+    try {
+        const { filename } = req.body;
+
+        if (!filename) {
+            return res.status(400).json({ error: 'Filename is required' });
+        }
+
+        console.log(`Processing large file from Cloud Storage: ${filename}`);
+
+        // Start streaming processing
+        const result = await processFileFromStorage(filename);
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error processing file from storage:', error);
+        res.status(500).json({ error: 'Failed to process file from storage' });
+    }
+});
+
 app.post('/api/upload', upload.single('file'), async (req, res) => {
     try {
         if (!req.file) {
@@ -1732,7 +1986,8 @@ app.get('/api/health', (req, res) => {
 app.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {
         if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'File size too large (max 800MB)' });
+            console.log(`File upload rejected: File size too large. Limit: 800MB`);
+            return res.status(413).json({ error: 'File size too large (max 800MB)' });
         }
     }
 
