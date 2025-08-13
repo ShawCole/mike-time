@@ -60,7 +60,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             setCurrentStage('uploading');
             await axios.put(uploadUrl, file, {
                 headers: {
-                    'Content-Type': file.type || 'text/csv'
+                    'Content-Type': file.type || 'text/csv',
+                    'x-goog-content-length-range': '0,8589934592'
                 },
                 timeout: 3600000, // 1 hour timeout for very large files
                 onUploadProgress: (progressEvent) => {
