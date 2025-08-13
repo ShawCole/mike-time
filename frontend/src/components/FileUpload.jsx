@@ -47,46 +47,58 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
         setCurrentStage('preparing');
         console.log(`Using high-performance upload for ${fileSizeMB.toFixed(2)}MB file`);
 
-        // Step 1: Get signed URL for direct Cloud Storage upload
-        const signedUrlResponse = await axios.post(API_ENDPOINTS.getUploadUrl, {
-            filename: file.name,
-            contentType: file.type || 'text/csv'
-        });
+        try {
+            // Step 1: Get signed URL for direct Cloud Storage upload
+            const signedUrlResponse = await axios.post(API_ENDPOINTS.getUploadUrl, {
+                filename: file.name,
+                contentType: file.type || 'text/csv'
+            });
 
-        const { uploadUrl, filename } = signedUrlResponse.data;
+            const { uploadUrl, filename } = signedUrlResponse.data;
 
-        // Step 2: Upload directly to Cloud Storage
-        setCurrentStage('uploading');
-        await axios.put(uploadUrl, file, {
-            headers: {
-                'Content-Type': file.type || 'text/csv'
-            },
-            timeout: 3600000, // 1 hour timeout for very large files
-            onUploadProgress: (progressEvent) => {
-                const percentCompleted = Math.round(
-                    (progressEvent.loaded * 100) / progressEvent.total
-                );
-                setUploadProgress(percentCompleted);
+            // Step 2: Upload directly to Cloud Storage
+            setCurrentStage('uploading');
+            await axios.put(uploadUrl, file, {
+                headers: {
+                    'Content-Type': file.type || 'text/csv'
+                },
+                timeout: 3600000, // 1 hour timeout for very large files
+                onUploadProgress: (progressEvent) => {
+                    const percentCompleted = Math.round(
+                        (progressEvent.loaded * 100) / progressEvent.total
+                    );
+                    setUploadProgress(percentCompleted);
+                }
+            });
+
+            // Step 3: Process from Cloud Storage (streaming)
+            setCurrentStage('processing');
+            setUploadProgress(100);
+            setProcessingProgress(10);
+
+            const response = await axios.post(API_ENDPOINTS.processFromStorage, {
+                filename: filename
+            }, {
+                timeout: 3600000 // 1 hour timeout for processing
+            });
+
+            setProcessingProgress(100);
+
+            // Small delay to show completion
+            setTimeout(() => {
+                onUpload(response.data);
+            }, 500);
+        } catch (err) {
+            console.warn('High-performance path unavailable, attempting direct upload fallback...', err?.response?.data || err?.message || err);
+            // If signed URL flow fails (likely in local dev without GCP creds), fall back to direct upload
+            // Backend direct upload limit is 800MB
+            if (fileSizeMB <= 800) {
+                await uploadSmallFile(file);
+                return;
             }
-        });
-
-        // Step 3: Process from Cloud Storage (streaming)
-        setCurrentStage('processing');
-        setUploadProgress(100);
-        setProcessingProgress(10);
-
-        const response = await axios.post(API_ENDPOINTS.processFromStorage, {
-            filename: filename
-        }, {
-            timeout: 3600000 // 1 hour timeout for processing
-        });
-
-        setProcessingProgress(100);
-
-        // Small delay to show completion
-        setTimeout(() => {
-            onUpload(response.data);
-        }, 500);
+            // If file exceeds backend limit, surface a clear error
+            throw new Error('Cloud upload unavailable and file exceeds 800MB backend limit. Configure GCS or upload a smaller file.');
+        }
     };
 
     // Regular upload for smaller files (<32MB)

@@ -11,15 +11,17 @@ const { promisify } = require('util');
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const { Storage } = require('@google-cloud/storage');
 const sqlite3 = require('sqlite3').verbose();
+const ExcelJS = require('exceljs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Initialize Google Cloud Storage
+const projectId = process.env.GCP_PROJECT_ID || 'accupoint-solutions-dev';
 const cloudStorage = new Storage({
-    projectId: 'accupoint-solutions-dev'
+    projectId
 });
-const BUCKET_NAME = 'mike-time-csv-processing';
+const BUCKET_NAME = process.env.GCS_BUCKET_NAME || 'mike-time-csv-processing';
 const bucket = cloudStorage.bucket(BUCKET_NAME);
 
 // Initialize SQLite database for learning system
@@ -429,6 +431,7 @@ const corsOptions = {
         'http://localhost:5174',
         'http://localhost:5175',
         'http://localhost:5176',
+        'http://localhost:5177',
         'https://mikeqc.netlify.app'
     ],
     credentials: true,
@@ -1129,8 +1132,10 @@ const processFileFromStorage = async (filename) => {
             console.log(`Processing time: ${processingTime}ms (${(processingTime / 1000).toFixed(2)}s)`);
             console.log(`Memory after processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
-            // Clean up the file from Cloud Storage
-            file.delete().catch(err => console.warn('Failed to delete file from storage:', err));
+            // Optionally clean up the file from Cloud Storage (keep if env set)
+            if (!process.env.GCS_KEEP_FILES || process.env.GCS_KEEP_FILES !== 'true') {
+                file.delete().catch(err => console.warn('Failed to delete file from storage:', err));
+            }
 
             resolve({
                 success: true,
@@ -1256,9 +1261,38 @@ app.post('/api/process-from-storage', async (req, res) => {
 
         console.log(`Processing large file from Cloud Storage: ${filename}`);
 
-        // Start streaming processing
-        const result = await processFileFromStorage(filename);
+        // Decide by extension
+        const lower = filename.toLowerCase();
+        if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+            const startTime = Date.now();
+            const file = bucket.file(filename);
+            const [exists] = await file.exists();
+            if (!exists) throw new Error(`File ${filename} not found in Cloud Storage`);
 
+            const [metadata] = await file.getMetadata();
+            const fileSizeMB = (metadata.size / 1024 / 1024).toFixed(2);
+            console.log(`Excel file size: ${fileSizeMB}MB`);
+
+            const stream = file.createReadStream();
+            const result = await analyzeExcelStreamFromReadable(stream, filename);
+
+            const processingTime = Date.now() - startTime;
+            if (!process.env.GCS_KEEP_FILES || process.env.GCS_KEEP_FILES !== 'true') {
+                file.delete().catch(err => console.warn('Failed to delete file from storage:', err));
+            }
+            return res.json({
+                success: true,
+                filename,
+                totalRows: result.totalRows,
+                totalColumns: result.headers.length,
+                issues: await enhanceSuggestionsWithLearning(result.issues),
+                processingTimeMs: processingTime,
+                fileSizeMB: parseFloat(fileSizeMB)
+            });
+        }
+
+        // Fallback to CSV streaming path
+        const result = await processFileFromStorage(filename);
         res.json(result);
     } catch (error) {
         console.error('Error processing file from storage:', error);
@@ -1300,27 +1334,30 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
                 totalColumns = 0;
             }
         } else if (fileExtension === '.xlsx' || fileExtension === '.xls') {
-            // For Excel files, we still need to load into memory but with optimizations
-            const data = await parseExcelFile(filePath);
-
-            if (!data || !Array.isArray(data) || data.length === 0) {
-                throw new Error('Excel file is empty or could not be parsed');
+            // Stream for large Excel files to avoid memory blowups
+            if (req.file.size > 20 * 1024 * 1024) {
+                console.log('Using streaming Excel analysis for large file');
+                const streamResult = await analyzeExcelStream(filePath, req.file.originalname);
+                totalRows = streamResult.totalRows;
+                totalColumns = streamResult.headers.length;
+                analysisResult = { issues: streamResult.issues, totalRows };
+            } else {
+                // Existing in-memory path
+                const data = await parseExcelFile(filePath);
+                if (!data || !Array.isArray(data) || data.length === 0) {
+                    throw new Error('Excel file is empty or could not be parsed');
+                }
+                totalRows = data.length;
+                totalColumns = Object.keys(data[0] || {}).length;
+                console.log('Starting Excel data analysis...');
+                const analysisStartTime = Date.now();
+                const issues = analyzeData(data, req.file.originalname);
+                const analysisTime = Date.now() - analysisStartTime;
+                analysisResult = { issues, totalRows };
+                data.length = 0;
+                forceGC();
+                console.log(`Excel analysis complete in ${analysisTime}ms`);
             }
-
-            totalRows = data.length;
-            totalColumns = Object.keys(data[0] || {}).length;
-
-            console.log('Starting Excel data analysis...');
-            const analysisStartTime = Date.now();
-            const issues = analyzeData(data, req.file.originalname);
-            const analysisTime = Date.now() - analysisStartTime;
-
-            analysisResult = { issues, totalRows };
-
-            // Clear data from memory immediately after analysis
-            data.length = 0;
-            forceGC();
-            console.log(`Excel analysis complete in ${analysisTime}ms`);
         } else {
             throw new Error('Unsupported file type');
         }

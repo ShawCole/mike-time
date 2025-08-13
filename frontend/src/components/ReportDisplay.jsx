@@ -319,10 +319,18 @@ const ReportDisplay = ({ data, onReset }) => {
         try {
             const overriddenFix = getFixedValue(change);
 
+            // Debug logging to understand the structure
+            console.log('Change object:', change);
+            console.log('Session ID:', data.sessionId);
+            console.log('Change ID:', change.id);
+            console.log('Change changeId:', change.changeId);
+            console.log('Overridden fix:', overriddenFix);
+
             // Store the override pattern for learning
+            // Use the original issue ID, not the changeId
             const response = await axios.post(API_ENDPOINTS.fixIssue, {
                 sessionId: data.sessionId,
-                issueId: change.id,
+                issueId: change.id, // This should be the original issue.id from the spread
                 overriddenFix: overriddenFix
             });
 
