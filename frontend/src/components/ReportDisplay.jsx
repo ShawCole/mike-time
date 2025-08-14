@@ -291,6 +291,15 @@ const ReportDisplay = ({ data, onReset }) => {
         return overriddenFixes[issueId] && overriddenFixes[issueId] !== issues.find(i => i.id === issueId)?.suggestedFix;
     };
 
+    // Normalize problem text to use server-provided max length where older messages were hardcoded
+    const formatProblem = (problem) => {
+        if (!problem) return '';
+        const maxLen = data.maxCellLength || 1000000;
+        return problem
+            .replace(/Length exceeds\s+100\s+characters/g, `Length exceeds ${maxLen} characters`)
+            .replace(/max\s+1000\b/g, `max ${maxLen}`);
+    };
+
     // Change override functions
     const handleChangeEditStart = (issueId) => {
         setEditingChangeId(issueId);
@@ -737,7 +746,7 @@ const ReportDisplay = ({ data, onReset }) => {
                                                         Cell {item.cellReference || `${item.column}${item.row}`} • Column: {item.column}
                                                     </span>
                                                     <span className={`problem-badge ${item.fixed ? 'fixed-badge' : ''}`}>
-                                                        {item.fixed ? '✅ Fixed' : item.problem}
+                                                        {item.fixed ? '✅ Fixed' : formatProblem(item.problem)}
                                                     </span>
                                                 </div>
                                                 <div className="issue-content">
@@ -832,9 +841,11 @@ const ReportDisplay = ({ data, onReset }) => {
                                                                 <span className="length-badge max-length">
                                                                     Maximum: {data.maxCellLength || 1000000} characters
                                                                 </span>
-                                                                <span className="length-badge over-limit">
-                                                                    Over limit by: {item.originalValue.length - (data.maxCellLength || 1000000)} characters
-                                                                </span>
+                                                                {Math.max(0, item.originalValue.length - (data.maxCellLength || 1000000)) > 0 && (
+                                                                    <span className="length-badge over-limit">
+                                                                        Over limit by: {Math.max(0, item.originalValue.length - (data.maxCellLength || 1000000))} characters
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     )}
