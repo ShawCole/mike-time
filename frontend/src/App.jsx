@@ -41,33 +41,30 @@ function App() {
   ];
 
   // Mock progress simulation
-  const startProgressSimulation = () => {
+  // Poll real server progress
+  const startProgressSimulation = (sessionId) => {
     setProgressPercentage(0);
     setCurrentLogLine(mockLogLines[0]);
 
     let currentProgress = 0;
     let logIndex = 0;
 
-    progressIntervalRef.current = setInterval(() => {
-      currentProgress += Math.random() * 8 + 2; // Random increment between 2-10
-
-      if (currentProgress >= 100) {
-        currentProgress = 100;
-        setProgressPercentage(100);
-        setCurrentLogLine(mockLogLines[mockLogLines.length - 1]);
-        clearInterval(progressIntervalRef.current);
-        return;
+    progressIntervalRef.current = setInterval(async () => {
+      try {
+        if (!sessionId) return;
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/progress/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.percent === 'number') setProgressPercentage(data.percent);
+          if (data.log) setCurrentLogLine(data.log);
+          if (data.percent >= 100) {
+            clearInterval(progressIntervalRef.current);
+          }
+        }
+      } catch (e) {
+        // ignore network blips
       }
-
-      setProgressPercentage(Math.floor(currentProgress));
-
-      // Update log line based on progress
-      const expectedLogIndex = Math.floor((currentProgress / 100) * (mockLogLines.length - 1));
-      if (expectedLogIndex > logIndex && expectedLogIndex < mockLogLines.length) {
-        logIndex = expectedLogIndex;
-        setCurrentLogLine(mockLogLines[logIndex]);
-      }
-    }, 800 + Math.random() * 400); // Random interval between 800-1200ms
+    }, 1000);
   };
 
   const stopProgressSimulation = () => {
@@ -81,14 +78,14 @@ function App() {
 
   // Start progress simulation when loading begins
   useEffect(() => {
-    if (isLoading) {
-      startProgressSimulation();
+    if (isLoading && reportData?.sessionId) {
+      startProgressSimulation(reportData.sessionId);
     } else {
       stopProgressSimulation();
     }
 
     return () => stopProgressSimulation();
-  }, [isLoading]);
+  }, [isLoading, reportData?.sessionId]);
 
   const handleFileUpload = (data) => {
     setReportData(data);

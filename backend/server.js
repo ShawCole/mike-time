@@ -16,6 +16,9 @@ const ExcelJS = require('exceljs');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Maximum allowed cell length (default 1,000,000 characters)
+const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '1000000', 10);
+
 // Initialize Google Cloud Storage
 const projectId = process.env.GCP_PROJECT_ID || 'accupoint-solutions-dev';
 const cloudStorage = new Storage({
@@ -772,7 +775,7 @@ const detectLanguageContext = (text) => {
     return 'unknown';
 };
 
-const truncateText = (text, maxLength = 100) => {
+const truncateText = (text, maxLength = MAX_CELL_LENGTH) => {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength).trim();
 };
@@ -849,7 +852,7 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
                         const hasInvalidChars = invalidChars.length > 0;
 
                         // Check for length issues
-                        const hasLengthIssues = cellStr.length > 100;
+                        const hasLengthIssues = cellStr.length > MAX_CELL_LENGTH;
 
                         if (hasInvalidChars || hasLengthIssues) {
                             let problemDescription = [];
@@ -861,7 +864,7 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
                                 problemDescription.push(`Invalid characters: ${charDescriptions.join(', ')}`);
                             }
                             if (hasLengthIssues) {
-                                problemDescription.push(`Length exceeds 100 characters (${cellStr.length} chars)`);
+                                problemDescription.push(`Length exceeds ${MAX_CELL_LENGTH} characters (${cellStr.length} chars)`);
                             }
 
                             // Generate suggested fix
@@ -961,7 +964,7 @@ const analyzeData = (data, filename, progressCallback) => {
                 const hasInvalidChars = invalidChars.length > 0;
 
                 // Check for length issues
-                const hasLengthIssues = cellStr.length > 100;
+                const hasLengthIssues = cellStr.length > MAX_CELL_LENGTH;
 
                 if (hasInvalidChars || hasLengthIssues) {
                     let problemDescription = [];
@@ -973,7 +976,7 @@ const analyzeData = (data, filename, progressCallback) => {
                         problemDescription.push(`Invalid characters: ${charDescriptions.join(', ')}`);
                     }
                     if (hasLengthIssues) {
-                        problemDescription.push(`Length exceeds 100 characters (${cellStr.length} chars)`);
+                        problemDescription.push(`Length exceeds ${MAX_CELL_LENGTH} characters (${cellStr.length} chars)`);
                     }
 
                     // Generate suggested fix
@@ -1195,14 +1198,14 @@ const analyzeRowForIssues = (row, headers, rowIndex) => {
             }
 
             // Length check (quick)
-            if (trimmedValue.length > 1000) {
+            if (trimmedValue.length > MAX_CELL_LENGTH) {
                 issues.push({
                     id: `${rowIndex}-${colIndex}-length`,
                     row: rowIndex,
                     column: header,
                     originalValue: cellValue,
-                    suggestedFix: trimmedValue.substring(0, 1000) + '...',
-                    issues: [`Value too long (${trimmedValue.length} characters, max 1000)`],
+                    suggestedFix: trimmedValue.substring(0, MAX_CELL_LENGTH) + '...',
+                    issues: [`Value too long (${trimmedValue.length} characters, max ${MAX_CELL_LENGTH})`],
                     type: 'length_violation',
                     severity: 'low'
                 });
@@ -1322,9 +1325,17 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         const parseStartTime = Date.now();
 
         if (fileExtension === '.csv') {
-            // Use streaming analysis for CSV files
-            analysisResult = await analyzeCSVStreamMemoryEfficient(filePath, req.file.originalname);
+            // Use streaming analysis for CSV files with progress
+            const sessionIdTemp = Date.now().toString();
+            updateProgress(sessionIdTemp, 5, 'Reading CSV headers...');
+            analysisResult = await analyzeCSVStreamMemoryEfficient(
+                filePath,
+                req.file.originalname,
+                (pct) => updateProgress(sessionIdTemp, pct, `Processing CSV rows... ${pct}%`)
+            );
             totalRows = analysisResult.totalRows;
+            // Assign real sessionId later; stash progress under temp and move
+            req._progressSessionId = sessionIdTemp;
             // Get column count from headers or issues
             if (analysisResult.headers && analysisResult.headers.length > 0) {
                 totalColumns = analysisResult.headers.length;
@@ -1337,7 +1348,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             // Stream for large Excel files to avoid memory blowups
             if (req.file.size > 20 * 1024 * 1024) {
                 console.log('Using streaming Excel analysis for large file');
-                const streamResult = await analyzeExcelStream(filePath, req.file.originalname);
+                const sessionIdTemp = Date.now().toString();
+                updateProgress(sessionIdTemp, 5, 'Reading Excel workbook...');
+                const streamResult = await analyzeExcelStream(
+                    filePath,
+                    req.file.originalname,
+                    (pct) => updateProgress(sessionIdTemp, pct, `Analyzing Excel rows... ${pct}%`)
+                );
+                req._progressSessionId = sessionIdTemp;
                 totalRows = streamResult.totalRows;
                 totalColumns = streamResult.headers.length;
                 analysisResult = { issues: streamResult.issues, totalRows };
@@ -1378,6 +1396,13 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
         // Generate session ID and store minimal data (no original data stored)
         const sessionId = Date.now().toString();
+        // Move temp progress (if any) to real sessionId
+        if (req._progressSessionId && sessionProgress.has(req._progressSessionId)) {
+            const p = sessionProgress.get(req._progressSessionId);
+            sessionProgress.set(sessionId, p);
+            sessionProgress.delete(req._progressSessionId);
+        }
+        updateProgress(sessionId, 100, 'Analysis complete!');
         sessionData.set(sessionId, {
             filename: req.file.originalname,
             filePath: filePath, // Keep file path for potential re-processing
@@ -2030,6 +2055,28 @@ app.use((error, req, res, next) => {
 
     console.error('Unhandled error:', error);
     res.status(500).json({ error: 'Internal server error' });
+});
+
+// In-memory progress tracking per session
+const sessionProgress = new Map();
+const updateProgress = (sessionId, percent, log) => {
+    if (!sessionId) return;
+    const clamped = Math.max(0, Math.min(100, Math.floor(percent)));
+    sessionProgress.set(sessionId, { percent: clamped, log: log || '', updatedAt: Date.now() });
+};
+
+// Periodic cleanup for stale progress entries (older than 24h)
+setInterval(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const [id, p] of sessionProgress.entries()) {
+        if ((p.updatedAt || 0) < cutoff) sessionProgress.delete(id);
+    }
+}, 60 * 60 * 1000);
+
+app.get('/api/progress/:sessionId', (req, res) => {
+    const { sessionId } = req.params;
+    const p = sessionProgress.get(sessionId) || { percent: 0, log: '' };
+    res.json({ sessionId, ...p });
 });
 
 app.listen(PORT, () => {
