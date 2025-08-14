@@ -85,9 +85,17 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
             setProcessingProgress(100);
 
+            // Normalize response (ensure issueCount present for UI)
+            const normalized = {
+                ...response.data,
+                issueCount: Array.isArray(response.data?.issues)
+                    ? response.data.issues.length
+                    : (response.data?.issueCount || 0)
+            };
+
             // Small delay to show completion
             setTimeout(() => {
-                onUpload(response.data);
+                onUpload(normalized);
             }, 500);
         } catch (err) {
             console.warn('High-performance path unavailable, attempting direct upload fallback...', err?.response?.data || err?.message || err);
@@ -130,9 +138,17 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
         setCurrentStage('analyzing');
         setProcessingProgress(100);
 
+        // Normalize response (ensure issueCount present for UI)
+        const normalized = {
+            ...response.data,
+            issueCount: Array.isArray(response.data?.issues)
+                ? response.data.issues.length
+                : (response.data?.issueCount || 0)
+        };
+
         // Small delay to show completion
         setTimeout(() => {
-            onUpload(response.data);
+            onUpload(normalized);
         }, 500);
     };
 
