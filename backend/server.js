@@ -1437,7 +1437,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             memoryUsage: {
                 heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
                 heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
-            }
+            },
+            maxCellLength: MAX_CELL_LENGTH
         });
 
     } catch (error) {

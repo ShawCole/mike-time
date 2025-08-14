@@ -830,10 +830,10 @@ const ReportDisplay = ({ data, onReset }) => {
                                                                     Current: {item.originalValue.length} characters
                                                                 </span>
                                                                 <span className="length-badge max-length">
-                                                                    Maximum: 100 characters
+                                                                    Maximum: {data.maxCellLength || 1000000} characters
                                                                 </span>
                                                                 <span className="length-badge over-limit">
-                                                                    Over limit by: {item.originalValue.length - 100} characters
+                                                                    Over limit by: {item.originalValue.length - (data.maxCellLength || 1000000)} characters
                                                                 </span>
                                                             </div>
                                                         </div>
