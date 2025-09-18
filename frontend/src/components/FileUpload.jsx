@@ -54,7 +54,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 contentType: file.type || 'text/csv'
             });
 
-            const { uploadUrl, filename } = signedUrlResponse.data;
+            const { uploadUrl, filename, progressId } = signedUrlResponse.data;
 
             // Step 2: Upload directly to Cloud Storage
             setCurrentStage('uploading');
@@ -78,7 +78,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             setProcessingProgress(10);
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
-                filename: filename
+                filename: filename,
+                progressId: progressId
             }, {
                 timeout: 3600000 // 1 hour timeout for processing
             });

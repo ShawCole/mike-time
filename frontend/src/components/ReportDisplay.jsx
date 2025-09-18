@@ -34,14 +34,13 @@ const ReportDisplay = ({ data, onReset }) => {
 
     // Find similar cells with same original value and suggested fix
     const findSimilarCells = (currentIssue, fixToApply = null) => {
-        const currentOriginalValue = currentIssue.originalValue;
-        const currentSuggestedFix = currentIssue.suggestedFix;
+        const normalize = (s) => (s ?? '').trim();
+        const currentOriginalValue = normalize(currentIssue.originalValue);
 
         const similarIssues = issues.filter(issue =>
             issue.id !== currentIssue.id && // Exclude the current issue
             !issue.fixed && // Only unfixed issues
-            issue.originalValue === currentOriginalValue && // Same original value
-            issue.suggestedFix === currentSuggestedFix && // Same suggested fix
+            normalize(issue.originalValue) === currentOriginalValue && // Same original value (trim-normalized)
             !overriddenFixes[issue.id] // Not already overridden
         );
 

@@ -18,6 +18,8 @@ const PORT = process.env.PORT || 3001;
 
 // Maximum allowed cell length (default 1,000,000 characters)
 const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '1000000', 10);
+// Allow diacritics/unicode letters by default (set ALLOW_DIACRITICS=false to disable)
+const ALLOW_DIACRITICS = (process.env.ALLOW_DIACRITICS || 'true').toLowerCase() !== 'false';
 
 // Initialize Google Cloud Storage
 const projectId = process.env.GCP_PROJECT_ID || 'accupoint-solutions-dev';
@@ -595,11 +597,16 @@ const createAccentMap = () => {
 
 const accentMap = createAccentMap();
 
-// Strict character validation - only allow alphanumeric, space, and basic punctuation
+// Strict character validation - allow letters/numbers and basic punctuation
 const isValidCharacter = (char) => {
-    // Allow A-Z, a-z, 0-9, space, and basic punctuation
-    const validPattern = /^[A-Za-z0-9\s\.,;:!?\-_()[\]{}@#$%&*+=/<>|\\^~`'"]*$/;
-    return validPattern.test(char);
+    if (ALLOW_DIACRITICS) {
+        // Allow any unicode letters/numbers, whitespace, and common punctuation
+        const unicodePattern = /^[\p{L}\p{N}\s\.,;:!?\-_()\[\]{}@#$%&*+=/<>|\\^~`'\"]$/u;
+        return unicodePattern.test(char);
+    }
+    // Fallback: ASCII-only letters/numbers, whitespace, and punctuation
+    const asciiPattern = /^[A-Za-z0-9\s\.,;:!?\-_()\[\]{}@#$%&*+=/<>|\\^~`'\"]$/;
+    return asciiPattern.test(char);
 };
 
 // Find all invalid characters in a string
@@ -641,14 +648,17 @@ const getCharacterDescription = (char) => {
 const fixInvalidCharacters = (text) => {
     let fixedText = text;
 
-    // Replace accented characters with base equivalents
-    for (const [accented, base] of accentMap.entries()) {
-        fixedText = fixedText.replace(new RegExp(accented.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), base);
+    if (!ALLOW_DIACRITICS) {
+        // Replace accented characters with base equivalents when diacritics not allowed
+        for (const [accented, base] of accentMap.entries()) {
+            fixedText = fixedText.replace(new RegExp(accented.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), base);
+        }
+        // Remove non-ASCII entirely
+        fixedText = fixedText.replace(/[^\x00-\x7F]/g, '');
     }
 
-    // Remove any remaining invalid characters
-    fixedText = fixedText.replace(/[^\x00-\x7F]/g, ''); // Remove non-ASCII
-    fixedText = fixedText.replace(/[\x00-\x1F\x7F-\x9F]/g, ''); // Remove control characters
+    // Always remove control/zero-width/BOM characters
+    fixedText = fixedText.replace(/[\x00-\x1F\x7F-\x9F\u200B\u200C\u200D\uFEFF]/g, '');
 
     return fixedText.trim();
 };
@@ -878,8 +888,8 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
 
                             issues.push({
                                 id: `${rowIndex}-${columnIndex}`,
-                                cellReference: getExcelCellReference(rowIndex, columnIndex),
-                                row: rowIndex + 1,
+                                cellReference: getExcelCellReference(rowIndex + 1, columnIndex),
+                                row: rowIndex + 2,
                                 column: column,
                                 originalValue: cellStr,
                                 suggestedFix: suggestedFix,
@@ -990,8 +1000,8 @@ const analyzeData = (data, filename, progressCallback) => {
 
                     issues.push({
                         id: `${rowIndex}-${columnIndex}`,
-                        cellReference: getExcelCellReference(rowIndex, columnIndex),
-                        row: rowIndex + 1,
+                        cellReference: getExcelCellReference(rowIndex + 1, columnIndex),
+                        row: rowIndex + 2,
                         column: column,
                         originalValue: cellStr,
                         suggestedFix: suggestedFix,
@@ -1242,10 +1252,15 @@ app.post('/api/get-upload-url', async (req, res) => {
             }
         });
 
+        // Create a progress session id for the client to poll
+        const progressId = Date.now().toString();
+        sessionProgress.set(progressId, { percent: 0, log: 'Upload URL issued. Ready to upload to storage.', updatedAt: Date.now() });
+
         res.json({
             uploadUrl: signedUrl,
             filename: uniqueFilename,
-            bucketName: BUCKET_NAME
+            bucketName: BUCKET_NAME,
+            progressId
         });
     } catch (error) {
         console.error('Error generating signed URL:', error);
@@ -1256,11 +1271,14 @@ app.post('/api/get-upload-url', async (req, res) => {
 // Process file from Cloud Storage (high-performance)
 app.post('/api/process-from-storage', async (req, res) => {
     try {
-        const { filename } = req.body;
+        const { filename, progressId } = req.body;
 
         if (!filename) {
             return res.status(400).json({ error: 'Filename is required' });
         }
+
+        const id = progressId || Date.now().toString();
+        updateProgress(id, 2, 'Starting processing from storage...');
 
         console.log(`Processing large file from Cloud Storage: ${filename}`);
 
@@ -1274,10 +1292,10 @@ app.post('/api/process-from-storage', async (req, res) => {
 
             const [metadata] = await file.getMetadata();
             const fileSizeMB = (metadata.size / 1024 / 1024).toFixed(2);
-            console.log(`Excel file size: ${fileSizeMB}MB`);
+            updateProgress(id, 5, `Excel file size: ${fileSizeMB}MB`);
 
             const stream = file.createReadStream();
-            const result = await analyzeExcelStreamFromReadable(stream, filename);
+            const result = await analyzeExcelStreamFromReadable(stream, filename, (pct) => updateProgress(id, pct, `Analyzing Excel rows... ${pct}%`));
 
             const processingTime = Date.now() - startTime;
             if (!process.env.GCS_KEEP_FILES || process.env.GCS_KEEP_FILES !== 'true') {
@@ -1290,13 +1308,17 @@ app.post('/api/process-from-storage', async (req, res) => {
                 totalColumns: result.headers.length,
                 issues: await enhanceSuggestionsWithLearning(result.issues),
                 processingTimeMs: processingTime,
-                fileSizeMB: parseFloat(fileSizeMB)
+                fileSizeMB: parseFloat(fileSizeMB),
+                progressId: id,
+                maxCellLength: MAX_CELL_LENGTH
             });
         }
 
         // Fallback to CSV streaming path
+        updateProgress(id, 3, 'Reading CSV...');
         const result = await processFileFromStorage(filename);
-        res.json(result);
+        updateProgress(id, 100, 'Analysis complete!');
+        res.json({ ...result, progressId: id, maxCellLength: MAX_CELL_LENGTH });
     } catch (error) {
         console.error('Error processing file from storage:', error);
         res.status(500).json({ error: 'Failed to process file from storage' });
@@ -1308,6 +1330,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
+
+        const progressId = (req.body && req.body.progressId) ? String(req.body.progressId) : Date.now().toString();
+        updateProgress(progressId, 2, 'Upload received. Starting analysis...');
 
         const filePath = req.file.path;
         const fileExtension = path.extname(req.file.originalname).toLowerCase();
@@ -1777,7 +1802,7 @@ app.get('/api/download-fixed/:sessionId', async (req, res) => {
         // Create a map of fixes for quick lookup (key: row-column, value: fixed value)
         const fixesMap = new Map();
         session.fixedIssues.forEach(fixedIssue => {
-            const key = `${fixedIssue.row - 1}-${fixedIssue.column}`; // Convert to 0-based row index
+            const key = `${fixedIssue.row - 2}-${fixedIssue.column}`; // Convert Excel row to 0-based data row (header at row 1)
             fixesMap.set(key, fixedIssue.suggestedFix);
         });
 
@@ -2000,8 +2025,8 @@ app.post('/api/learning/train', async (req, res) => {
             await new Promise((resolve, reject) => {
                 db.run(
                     `INSERT OR REPLACE INTO learning_insights 
-                     (pattern_type, pattern_key, suggested_improvement, confidence_score, usage_count, updated_at) 
-                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+					 (pattern_type, pattern_key, suggested_improvement, confidence_score, usage_count, updated_at) 
+					 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
                     [insight.type, insight.pattern, insight.suggestion, insight.confidence, insight.usage_count],
                     (err) => {
                         if (err) reject(err);
@@ -2078,6 +2103,13 @@ app.get('/api/progress/:sessionId', (req, res) => {
     const { sessionId } = req.params;
     const p = sessionProgress.get(sessionId) || { percent: 0, log: '' };
     res.json({ sessionId, ...p });
+});
+
+// Progress API: start a new progress session
+app.post('/api/progress/start', (req, res) => {
+    const progressId = Date.now().toString();
+    sessionProgress.set(progressId, { percent: 0, log: 'Starting...', updatedAt: Date.now() });
+    res.json({ progressId });
 });
 
 app.listen(PORT, () => {
