@@ -81,7 +81,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
                 progressId: progressId,
-                allowDiacritics: !!allowDiacritics
+                allowDiacritics: !!allowDiacritics,
+                ignoreWhitelist: !allowDiacritics ? true : false
             }, {
                 timeout: 3600000 // 1 hour timeout for processing
             });
@@ -120,6 +121,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('allowDiacritics', String(allowDiacritics));
+        formData.append('ignoreWhitelist', String(!allowDiacritics));
 
         const response = await axios.post(API_ENDPOINTS.upload, formData, {
             headers: {
