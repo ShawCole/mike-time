@@ -1140,7 +1140,9 @@ const processFileFromStorage = async (filename) => {
                 columns: true,
                 skip_empty_lines: true,
                 trim: true,
-                relax_column_count: true
+                relax_column_count: true,
+                bom: true, // handle UTF-8 BOM at start of file
+                relax_quotes: true
             }));
 
         csvStream.on('headers', (headerList) => {
