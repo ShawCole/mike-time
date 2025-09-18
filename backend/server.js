@@ -24,6 +24,8 @@ const ALLOW_DIACRITICS = (process.env.ALLOW_DIACRITICS || 'true').toLowerCase() 
 if (typeof global.IGNORE_WHITELIST === 'undefined') {
     global.IGNORE_WHITELIST = false;
 }
+// Helper accessor for current allow-diacritics policy
+const getAllowDiacritics = () => (typeof global.ALLOW_DIACRITICS === 'boolean' ? global.ALLOW_DIACRITICS : ALLOW_DIACRITICS);
 
 // Initialize Google Cloud Storage
 const projectId = process.env.GCP_PROJECT_ID || 'accupoint-solutions-dev';
@@ -632,7 +634,7 @@ const isValidCharacter = (char) => {
     if (!global.IGNORE_WHITELIST && whitelistedCharacters.has(char)) return true;
 
     // If diacritics allowed, allow remaining characters
-    if (ALLOW_DIACRITICS) return true;
+    if (getAllowDiacritics()) return true;
 
     // ASCII-only mode: allow alphanumerics, space, and a curated punctuation set
     if (
