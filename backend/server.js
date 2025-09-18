@@ -1304,7 +1304,7 @@ app.post('/api/get-upload-url', async (req, res) => {
 // Process file from Cloud Storage (high-performance)
 app.post('/api/process-from-storage', async (req, res) => {
     try {
-        const { filename, progressId } = req.body;
+        const { filename, progressId, allowDiacritics } = req.body;
 
         if (!filename) {
             return res.status(400).json({ error: 'Filename is required' });
@@ -1349,7 +1349,12 @@ app.post('/api/process-from-storage', async (req, res) => {
 
         // Fallback to CSV streaming path
         updateProgress(id, 3, 'Reading CSV...');
+        const prevAllow = ALLOW_DIACRITICS;
+        if (typeof allowDiacritics === 'boolean') {
+            global.ALLOW_DIACRITICS = allowDiacritics;
+        }
         const result = await processFileFromStorage(filename);
+        global.ALLOW_DIACRITICS = prevAllow;
         updateProgress(id, 100, 'Analysis complete!');
         res.json({ ...result, progressId: id, maxCellLength: MAX_CELL_LENGTH });
     } catch (error) {
@@ -1368,6 +1373,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         updateProgress(progressId, 2, 'Upload received. Starting analysis...');
 
         const filePath = req.file.path;
+        const allowDiacriticsParam = req.body && typeof req.body.allowDiacritics !== 'undefined' ? String(req.body.allowDiacritics).toLowerCase() : undefined;
+        const allowDiacritics = allowDiacriticsParam === 'true' || allowDiacriticsParam === '1';
         const fileExtension = path.extname(req.file.originalname).toLowerCase();
 
         const startTime = Date.now();
@@ -1386,11 +1393,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             // Use streaming analysis for CSV files with progress
             const sessionIdTemp = Date.now().toString();
             updateProgress(sessionIdTemp, 5, 'Reading CSV headers...');
+            const prevAllow = ALLOW_DIACRITICS;
+            global.ALLOW_DIACRITICS = typeof allowDiacriticsParam === 'undefined' ? prevAllow : allowDiacritics;
             analysisResult = await analyzeCSVStreamMemoryEfficient(
                 filePath,
                 req.file.originalname,
                 (pct) => updateProgress(sessionIdTemp, pct, `Processing CSV rows... ${pct}%`)
             );
+            global.ALLOW_DIACRITICS = prevAllow;
             totalRows = analysisResult.totalRows;
             // Assign real sessionId later; stash progress under temp and move
             req._progressSessionId = sessionIdTemp;

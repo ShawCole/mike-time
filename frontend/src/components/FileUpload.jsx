@@ -8,6 +8,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
     const [currentStage, setCurrentStage] = useState(''); // 'uploading', 'processing', 'analyzing'
+    const [allowDiacritics, setAllowDiacritics] = useState(true);
 
     const uploadFile = async (file) => {
         try {
@@ -79,7 +80,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
-                progressId: progressId
+                progressId: progressId,
+                allowDiacritics: !!allowDiacritics
             }, {
                 timeout: 3600000 // 1 hour timeout for processing
             });
@@ -117,6 +119,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('allowDiacritics', String(allowDiacritics));
 
         const response = await axios.post(API_ENDPOINTS.upload, formData, {
             headers: {
@@ -304,6 +307,14 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                     )}
                 </div>
             )}
+
+            {/* Options */}
+            <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f1f5f9', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <input id="allow-diacritics" type="checkbox" checked={allowDiacritics} onChange={(e) => setAllowDiacritics(e.target.checked)} />
+                <label htmlFor="allow-diacritics" style={{ cursor: 'pointer' }}>
+                    Allow diacritics (treat accented letters as valid)
+                </label>
+            </div>
 
             <div style={{ marginTop: '2rem', padding: '1rem', background: '#f8fafc', borderRadius: '8px' }}>
                 <h4 style={{ marginBottom: '1rem', color: '#4a5568' }}>🔍 What We Analyze:</h4>
