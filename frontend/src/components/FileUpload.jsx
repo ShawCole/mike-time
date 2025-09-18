@@ -8,7 +8,15 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
     const [currentStage, setCurrentStage] = useState(''); // 'uploading', 'processing', 'analyzing'
-    const [allowDiacritics, setAllowDiacritics] = useState(true);
+    const [allowDiacritics, setAllowDiacritics] = useState(() => {
+        try {
+            const stored = localStorage.getItem('allowDiacritics');
+            if (stored === null) return true; // default
+            return stored === 'true';
+        } catch (_) {
+            return true;
+        }
+    });
 
     const uploadFile = async (file) => {
         try {
@@ -312,7 +320,11 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
             {/* Options */}
             <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', background: '#f1f5f9', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <input id="allow-diacritics" type="checkbox" checked={allowDiacritics} onChange={(e) => setAllowDiacritics(e.target.checked)} />
+                <input id="allow-diacritics" type="checkbox" checked={allowDiacritics} onChange={(e) => {
+                    const v = e.target.checked;
+                    setAllowDiacritics(v);
+                    try { localStorage.setItem('allowDiacritics', String(v)); } catch (_) {}
+                }} />
                 <label htmlFor="allow-diacritics" style={{ cursor: 'pointer' }}>
                     Allow diacritics (treat accented letters as valid)
                 </label>
