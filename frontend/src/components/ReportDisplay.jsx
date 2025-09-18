@@ -892,6 +892,51 @@ const ReportDisplay = ({ data, onReset }) => {
                                                                 🛠️ Fix This Issue
                                                             </button>
                                                         )}
+                                                        {!item.fixed && (
+                                                            <button
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        // Ask to confirm whitelisting first invalid char (if any)
+                                                                        let charToWhitelist = null;
+                                                                        if (item.hasInvalidChars && item.invalidCharacters && item.invalidCharacters.length > 0) {
+                                                                            charToWhitelist = item.invalidCharacters[0].char;
+                                                                        }
+                                                                        const confirmMsg = charToWhitelist
+                                                                            ? `Mark character "${charToWhitelist}" as not an issue and apply to all similar occurrences?`
+                                                                            : 'Mark this value as not an issue and apply to all similar occurrences?';
+                                                                        if (!window.confirm(confirmMsg)) return;
+
+                                                                        if (charToWhitelist) {
+                                                                            await axios.post(API_ENDPOINTS.learningSuggest.replace('/learning/suggest', '/not-an-issue'), {
+                                                                                char: charToWhitelist,
+                                                                                description: 'User approved from UI'
+                                                                            });
+                                                                        }
+
+                                                                        // Now auto-fix all similar issues that involve this exact originalValue
+                                                                        const similar = issues.filter(i => !i.fixed && i.originalValue === item.originalValue);
+                                                                        const fixPromises = similar.map(sim => axios.post(API_ENDPOINTS.fixIssue, {
+                                                                            sessionId: data.sessionId,
+                                                                            issueId: sim.id,
+                                                                            overriddenFix: sim.originalValue // keep as-is
+                                                                        }));
+                                                                        const responses = await Promise.all(fixPromises);
+
+                                                                        // Update UI
+                                                                        const fixedIds = new Set(similar.map(s => s.id));
+                                                                        setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: i.originalValue, fixedAt: new Date().toISOString() } : i));
+                                                                        setChanges(prev => [...prev, ...responses.map(r => r.data.fixedIssue)]);
+                                                                    } catch (e) {
+                                                                        console.error('Not An Issue failed:', e);
+                                                                        alert('Failed to mark as Not An Issue.');
+                                                                    }
+                                                                }}
+                                                                className="btn btn-secondary btn-sm"
+                                                                style={{ marginLeft: '0.5rem' }}
+                                                            >
+                                                                ✅ Not An Issue
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>

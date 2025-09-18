@@ -84,7 +84,26 @@ db.serialize(() => {
     db.run(`CREATE INDEX IF NOT EXISTS idx_character_mappings_from_char ON character_mappings(from_char)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_character_mappings_usage ON character_mappings(usage_count DESC)`);
 
+    // Whitelisted characters table (user-approved characters)
+    db.run(`CREATE TABLE IF NOT EXISTS whitelisted_characters (
+        char TEXT PRIMARY KEY,
+        description TEXT,
+        added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     console.log('Learning database initialized successfully');
+});
+
+// In-memory cache of whitelisted characters
+const whitelistedCharacters = new Set();
+// Load whitelisted characters at startup
+db.all(`SELECT char FROM whitelisted_characters`, [], (err, rows) => {
+    if (err) {
+        console.error('Error loading whitelisted characters:', err);
+    } else if (rows && rows.length) {
+        rows.forEach(r => whitelistedCharacters.add(r.char));
+        console.log(`Loaded ${whitelistedCharacters.size} whitelisted characters`);
+    }
 });
 
 // Learning Analytics Functions
@@ -599,14 +618,28 @@ const accentMap = createAccentMap();
 
 // Strict character validation - allow letters/numbers and basic punctuation
 const isValidCharacter = (char) => {
-    if (ALLOW_DIACRITICS) {
-        // Allow any unicode letters/numbers, whitespace, and common punctuation
-        const unicodePattern = /^[\p{L}\p{N}\s\.,;:!?\-_()\[\]{}@#$%&*+=/<>|\\^~`'\"]$/u;
-        return unicodePattern.test(char);
-    }
-    // Fallback: ASCII-only letters/numbers, whitespace, and punctuation
-    const asciiPattern = /^[A-Za-z0-9\s\.,;:!?\-_()\[\]{}@#$%&*+=/<>|\\^~`'\"]$/;
-    return asciiPattern.test(char);
+    const code = char.codePointAt(0);
+
+    // Always block control and zero-width/BOM
+    if ((code >= 0x00 && code <= 0x1F) || (code >= 0x7F && code <= 0x9F)) return false;
+    if (code === 0x200B || code === 0x200C || code === 0x200D || code === 0xFEFF) return false;
+
+    // Allow if explicitly whitelisted by user
+    if (whitelistedCharacters.has(char)) return true;
+
+    // If diacritics allowed, allow remaining characters
+    if (ALLOW_DIACRITICS) return true;
+
+    // ASCII-only mode: allow alphanumerics, space, and a curated punctuation set
+    if (
+        (code >= 48 && code <= 57) || // 0-9
+        (code >= 65 && code <= 90) || // A-Z
+        (code >= 97 && code <= 122) || // a-z
+        char === ' '
+    ) return true;
+
+    const allowedPunctuation = new Set(['.', ',', ';', ':', '!', '?', '-', '_', '(', ')', '[', ']', '{', '}', '@', '#', '$', '%', '&', '*', '+', '=', '/', '<', '>', '|', '\\', '^', '~', '`', '\'', '"']);
+    return allowedPunctuation.has(char);
 };
 
 // Find all invalid characters in a string
@@ -1553,6 +1586,33 @@ app.post('/api/fix-issue', async (req, res) => {
             error: 'Error fixing issue',
             details: error.message
         });
+    }
+});
+
+// Mark a character/value as "not an issue" (whitelist)
+app.post('/api/not-an-issue', async (req, res) => {
+    try {
+        const { char, description } = req.body || {};
+        if (!char || typeof char !== 'string' || char.length === 0) {
+            return res.status(400).json({ error: 'char is required' });
+        }
+
+        // Insert into DB (ignore if exists)
+        await new Promise((resolve, reject) => {
+            db.run(
+                `INSERT OR IGNORE INTO whitelisted_characters (char, description) VALUES (?, ?)`,
+                [char, description || 'User approved'],
+                (err) => (err ? reject(err) : resolve())
+            );
+        });
+
+        // Update in-memory cache
+        whitelistedCharacters.add(char);
+
+        res.json({ success: true, whitelisted: char });
+    } catch (error) {
+        console.error('Error whitelisting character:', error);
+        res.status(500).json({ error: 'Failed to whitelist character' });
     }
 });
 
