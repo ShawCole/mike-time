@@ -1027,14 +1027,14 @@ const ReportDisplay = ({ data, onReset }) => {
             {/* Bulk Apply Modal */}
             {showBulkOverrideModal && (
                 <div className="modal-overlay">
-                    <div className="modal-content bulk-override-modal" style={{ position: 'relative' }}>
-                        <button
-                            onClick={handleBulkOverrideCancel}
-                            aria-label="Close"
-                            className="modal-close"
-                            style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
-                        >×</button>
-                        <div className="modal-header">
+                    <div className="modal-content bulk-override-modal">
+                        <div className="modal-header" style={{ position: 'relative' }}>
+                            <button
+                                onClick={handleBulkOverrideCancel}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                            >×</button>
                             <h3>🔄 Apply to Similar Cells?</h3>
                             <p>We found {bulkOverrideData.similarIssues.length} other cell{bulkOverrideData.similarIssues.length > 1 ? 's' : ''} with the same issue.</p>
                         </div>
@@ -1114,14 +1114,14 @@ const ReportDisplay = ({ data, onReset }) => {
             {/* Not An Issue Modal */}
             {showNotIssueModal && (
                 <div className="modal-overlay">
-                    <div className="modal-content bulk-override-modal" style={{ position: 'relative' }}>
-                        <button
-                            onClick={handleNotIssueCancel}
-                            aria-label="Close"
-                            className="modal-close"
-                            style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
-                        >×</button>
-                        <div className="modal-header">
+                    <div className="modal-content bulk-override-modal">
+                        <div className="modal-header" style={{ position: 'relative' }}>
+                            <button
+                                onClick={handleNotIssueCancel}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                            >×</button>
                             <h3>✅ Mark as Not An Issue?</h3>
                             <p>
                                 {notIssueData.char
