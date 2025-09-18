@@ -177,6 +177,39 @@ const ReportDisplay = ({ data, onReset }) => {
         }
     };
 
+    // Not An Issue for just this one cell
+    const handleNotIssueSingle = async () => {
+        try {
+            const { currentIssue, char } = notIssueData;
+            if (!currentIssue) return;
+            if (char) {
+                try {
+                    await axios.post(API_ENDPOINTS.notAnIssue, { char, description: 'User approved from UI' });
+                } catch (err) {
+                    if (!(err?.response && err.response.status === 404)) {
+                        throw err;
+                    }
+                    console.warn('not-an-issue endpoint unavailable on backend; proceeding without persisting whitelist');
+                }
+            }
+            const resp = await axios.post(API_ENDPOINTS.fixIssue, {
+                sessionId: data.sessionId,
+                issueId: currentIssue.id,
+                overriddenFix: currentIssue.originalValue
+            });
+            if (resp.data?.success) {
+                setIssues(prev => prev.map(i => i.id === currentIssue.id ? { ...i, fixed: true, suggestedFix: currentIssue.originalValue, fixedAt: new Date().toISOString() } : i));
+                setChanges(prev => [...prev, resp.data.fixedIssue]);
+            }
+        } catch (e) {
+            console.error('Not An Issue single failed:', e);
+            alert('Failed to apply Not An Issue to this cell.');
+        } finally {
+            setShowNotIssueModal(false);
+            setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
+        }
+    };
+
     const handleNotIssueCancel = () => {
         setShowNotIssueModal(false);
         setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
@@ -998,6 +1031,12 @@ const ReportDisplay = ({ data, onReset }) => {
                         <div className="modal-header">
                             <h3>🔄 Apply to Similar Cells?</h3>
                             <p>We found {bulkOverrideData.similarIssues.length} other cell{bulkOverrideData.similarIssues.length > 1 ? 's' : ''} with the same issue.</p>
+                            <button
+                                onClick={handleBulkOverrideCancel}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer' }}
+                            >×</button>
                         </div>
 
                         <div className="modal-body">
@@ -1083,6 +1122,12 @@ const ReportDisplay = ({ data, onReset }) => {
                                     ? `We will whitelist character "${notIssueData.char}" and apply to similar cells.`
                                     : 'We will keep the current value and apply to similar cells.'}
                             </p>
+                            <button
+                                onClick={handleNotIssueCancel}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer' }}
+                            >×</button>
                         </div>
 
                         <div className="modal-body">
@@ -1126,7 +1171,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
                         <div className="modal-actions">
                             <button onClick={handleNotIssueConfirm} className="btn btn-primary">✅ Yes, Apply to All</button>
-                            <button onClick={handleNotIssueCancel} className="btn btn-secondary">❌ No, Cancel</button>
+                            <button onClick={handleNotIssueSingle} className="btn btn-secondary">❌ No, Just This One</button>
                         </div>
                     </div>
                 </div>

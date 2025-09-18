@@ -323,7 +323,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 <input id="allow-diacritics" type="checkbox" checked={allowDiacritics} onChange={(e) => {
                     const v = e.target.checked;
                     setAllowDiacritics(v);
-                    try { localStorage.setItem('allowDiacritics', String(v)); } catch (_) {}
+                    try { localStorage.setItem('allowDiacritics', String(v)); } catch (_) { }
                 }} />
                 <label htmlFor="allow-diacritics" style={{ cursor: 'pointer' }}>
                     Allow diacritics (treat accented letters as valid)
