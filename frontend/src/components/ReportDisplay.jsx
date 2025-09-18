@@ -149,7 +149,15 @@ const ReportDisplay = ({ data, onReset }) => {
         try {
             const { currentIssue, similarIssues, char } = notIssueData;
             if (char) {
-                await axios.post(API_ENDPOINTS.notAnIssue, { char, description: 'User approved from UI' });
+                try {
+                    await axios.post(API_ENDPOINTS.notAnIssue, { char, description: 'User approved from UI' });
+                } catch (err) {
+                    // If backend is not yet redeployed with this endpoint, ignore 404 and continue client-side
+                    if (!(err?.response && err.response.status === 404)) {
+                        throw err;
+                    }
+                    console.warn('not-an-issue endpoint unavailable on backend; proceeding without persisting whitelist');
+                }
             }
             const fixPromises = similarIssues.map(sim => axios.post(API_ENDPOINTS.fixIssue, {
                 sessionId: data.sessionId,
