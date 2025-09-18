@@ -32,6 +32,14 @@ const ReportDisplay = ({ data, onReset }) => {
         isOverrideMode: false // Track whether this is an override or just a suggested fix
     });
 
+    // Not An Issue modal state
+    const [showNotIssueModal, setShowNotIssueModal] = useState(false);
+    const [notIssueData, setNotIssueData] = useState({
+        currentIssue: null,
+        similarIssues: [],
+        char: null
+    });
+
     // Find similar cells with same original value and suggested fix
     const findSimilarCells = (currentIssue, fixToApply = null) => {
         const normalize = (s) => (s ?? '').trim();
