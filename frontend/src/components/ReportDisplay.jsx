@@ -136,6 +136,35 @@ const ReportDisplay = ({ data, onReset }) => {
             alert('Failed to apply bulk fix. Please try again.');
         }
     };
+    // Not An Issue confirm
+    const handleNotIssueConfirm = async () => {
+        try {
+            const { currentIssue, similarIssues, char } = notIssueData;
+            if (char) {
+                await axios.post(API_ENDPOINTS.notAnIssue, { char, description: 'User approved from UI' });
+            }
+            const fixPromises = similarIssues.map(sim => axios.post(API_ENDPOINTS.fixIssue, {
+                sessionId: data.sessionId,
+                issueId: sim.id,
+                overriddenFix: sim.originalValue
+            }));
+            const responses = await Promise.all(fixPromises);
+            const fixedIds = new Set(similarIssues.map(s => s.id));
+            setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: i.originalValue, fixedAt: new Date().toISOString() } : i));
+            setChanges(prev => [...prev, ...responses.map(r => r.data.fixedIssue)]);
+        } catch (e) {
+            console.error('Not An Issue confirm failed:', e);
+            alert('Failed to apply Not An Issue.');
+        } finally {
+            setShowNotIssueModal(false);
+            setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
+        }
+    };
+
+    const handleNotIssueCancel = () => {
+        setShowNotIssueModal(false);
+        setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
+    };
 
     // Close bulk apply modal and fix only current issue
     const handleBulkOverrideCancel = async () => {
@@ -896,36 +925,10 @@ const ReportDisplay = ({ data, onReset }) => {
                                                             <button
                                                                 onClick={async () => {
                                                                     try {
-                                                                        // Ask to confirm whitelisting first invalid char (if any)
-                                                                        let charToWhitelist = null;
-                                                                        if (item.hasInvalidChars && item.invalidCharacters && item.invalidCharacters.length > 0) {
-                                                                            charToWhitelist = item.invalidCharacters[0].char;
-                                                                        }
-                                                                        const confirmMsg = charToWhitelist
-                                                                            ? `Mark character "${charToWhitelist}" as not an issue and apply to all similar occurrences?`
-                                                                            : 'Mark this value as not an issue and apply to all similar occurrences?';
-                                                                        if (!window.confirm(confirmMsg)) return;
-
-                                                                        if (charToWhitelist) {
-                                                                            await axios.post(API_ENDPOINTS.learningSuggest.replace('/learning/suggest', '/not-an-issue'), {
-                                                                                char: charToWhitelist,
-                                                                                description: 'User approved from UI'
-                                                                            });
-                                                                        }
-
-                                                                        // Now auto-fix all similar issues that involve this exact originalValue
+                                                                        const charToWhitelistLocal = (item.hasInvalidChars && item.invalidCharacters && item.invalidCharacters.length > 0) ? item.invalidCharacters[0].char : null;
                                                                         const similar = issues.filter(i => !i.fixed && i.originalValue === item.originalValue);
-                                                                        const fixPromises = similar.map(sim => axios.post(API_ENDPOINTS.fixIssue, {
-                                                                            sessionId: data.sessionId,
-                                                                            issueId: sim.id,
-                                                                            overriddenFix: sim.originalValue // keep as-is
-                                                                        }));
-                                                                        const responses = await Promise.all(fixPromises);
-
-                                                                        // Update UI
-                                                                        const fixedIds = new Set(similar.map(s => s.id));
-                                                                        setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: i.originalValue, fixedAt: new Date().toISOString() } : i));
-                                                                        setChanges(prev => [...prev, ...responses.map(r => r.data.fixedIssue)]);
+                                                                        setNotIssueData({ currentIssue: item, similarIssues: similar, char: charToWhitelistLocal });
+                                                                        setShowNotIssueModal(true);
                                                                     } catch (e) {
                                                                         console.error('Not An Issue failed:', e);
                                                                         alert('Failed to mark as Not An Issue.');
@@ -1048,6 +1051,66 @@ const ReportDisplay = ({ data, onReset }) => {
                             >
                                 ❌ No, Just This One
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Not An Issue Modal */}
+            {showNotIssueModal && (
+                <div className="modal-overlay">
+                    <div className="modal-content bulk-override-modal">
+                        <div className="modal-header">
+                            <h3>✅ Mark as Not An Issue?</h3>
+                            <p>
+                                {notIssueData.char
+                                    ? `We will whitelist character "${notIssueData.char}" and apply to similar cells.`
+                                    : 'We will keep the current value and apply to similar cells.'}
+                            </p>
+                        </div>
+
+                        <div className="modal-body">
+                            <div className="override-comparison">
+                                <div className="override-section">
+                                    <label>Original Value:</label>
+                                    <div className="value-display original-value">
+                                        {notIssueData.currentIssue?.originalValue}
+                                    </div>
+                                </div>
+                                <div className="override-section">
+                                    <label>Suggested Fix (will be ignored):</label>
+                                    <div className="value-display suggested-value">
+                                        {notIssueData.currentIssue?.suggestedFix}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="similar-cells-info">
+                                <div className="similar-cells-inline">
+                                    <span className="similar-cells-label"><strong>Similar cells found:</strong></span>
+                                    <div className="similar-cells-list">
+                                        {notIssueData.similarIssues.slice(0, 5).map(issue => (
+                                            <span key={issue.id} className="cell-reference">
+                                                {issue.cellReference || `${issue.column}${issue.row}`}
+                                            </span>
+                                        ))}
+                                        {notIssueData.similarIssues.length > 5 && (
+                                            <span className="more-cells">
+                                                +{notIssueData.similarIssues.length - 5} more
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="modal-question">
+                                <p><strong>Do you want to apply Not An Issue to all similar cells?</strong></p>
+                            </div>
+                        </div>
+
+                        <div className="modal-actions">
+                            <button onClick={handleNotIssueConfirm} className="btn btn-primary">✅ Yes, Apply to All</button>
+                            <button onClick={handleNotIssueCancel} className="btn btn-secondary">❌ No, Cancel</button>
                         </div>
                     </div>
                 </div>
