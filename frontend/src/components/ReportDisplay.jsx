@@ -91,9 +91,12 @@ const ReportDisplay = ({ data, onReset }) => {
             // Determine the fix to apply
             const fixToApply = isOverrideMode ? overriddenFix : currentIssue.suggestedFix;
 
-            // Apply fix to all similar issues
+            // Apply fix to all similar issues in controlled batches to avoid flooding the API
+            const MAX_CONCURRENT = 20;
+            const BATCH_SIZE = 200;
+
+            // Optionally pre-mark overrides client-side for UX
             if (isOverrideMode) {
-                // For override mode, update the overrides state
                 const updatedOverrides = { ...overriddenFixes };
                 similarIssues.forEach(issue => {
                     updatedOverrides[issue.id] = overriddenFix;
@@ -101,30 +104,56 @@ const ReportDisplay = ({ data, onReset }) => {
                 setOverriddenFixes(updatedOverrides);
             }
 
-            // Fix all similar issues automatically
-            const fixPromises = similarIssues.map(issue =>
-                axios.post(API_ENDPOINTS.fixIssue, {
-                    sessionId: data.sessionId,
-                    issueId: issue.id,
-                    overriddenFix: isOverrideMode ? overriddenFix : undefined
-                })
-            );
+            const postFix = (issueId, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
+                sessionId: data.sessionId,
+                issueId,
+                overriddenFix: overrideValue
+            });
 
-            const responses = await Promise.all(fixPromises);
+            const results = [];
+            for (let i = 0; i < similarIssues.length; i += BATCH_SIZE) {
+                const batch = similarIssues.slice(i, i + BATCH_SIZE);
+                // Concurrency limiter within the batch
+                const queue = [...batch];
+                const inFlight = new Set();
+                const pushNext = () => {
+                    while (inFlight.size < MAX_CONCURRENT && queue.length) {
+                        const issue = queue.shift();
+                        const p = postFix(issue.id, isOverrideMode ? overriddenFix : undefined)
+                            .then(r => ({ ok: true, value: r }))
+                            .catch(e => ({ ok: false, reason: e }))
+                            .finally(() => inFlight.delete(p));
+                        inFlight.add(p);
+                    }
+                };
+                pushNext();
+                while (inFlight.size > 0 || queue.length > 0) {
+                    // Wait for any inFlight to settle
+                    // eslint-disable-next-line no-await-in-loop
+                    const settled = await Promise.race(inFlight);
+                    results.push(settled);
+                    pushNext();
+                }
+            }
 
-            // Update issues and changes
-            const fixedIssueIds = similarIssues.map(issue => issue.id);
-            const newChanges = responses.map(response => response.data.fixedIssue);
+            const successes = results.filter(r => r.ok).map(r => r.value);
+            const failures = results.filter(r => !r.ok);
 
-            setIssues(prevIssues =>
-                prevIssues.map(issue =>
-                    fixedIssueIds.includes(issue.id)
-                        ? { ...issue, fixed: true, fixedAt: new Date().toISOString() }
-                        : issue
-                )
-            );
+            // Update issues and changes for successful responses
+            const fixedIssueIds = successes.map(resp => resp.data.fixedIssue?.id).filter(Boolean);
+            const newChanges = successes.map(resp => resp.data.fixedIssue).filter(Boolean);
 
-            setChanges(prevChanges => [...prevChanges, ...newChanges]);
+            if (fixedIssueIds.length > 0) {
+                setIssues(prevIssues =>
+                    prevIssues.map(issue =>
+                        fixedIssueIds.includes(issue.id)
+                            ? { ...issue, fixed: true, fixedAt: new Date().toISOString() }
+                            : issue
+                    )
+                );
+
+                setChanges(prevChanges => [...prevChanges, ...newChanges]);
+            }
 
             // Close modal
             setShowBulkOverrideModal(false);
@@ -138,6 +167,11 @@ const ReportDisplay = ({ data, onReset }) => {
 
             // Now fix the original issue
             await handleFixIssueInternal(currentIssue.id, isOverrideMode ? overriddenFix : undefined);
+
+            if (failures.length > 0) {
+                console.warn(`Bulk fix completed with ${failures.length} failures out of ${similarIssues.length}.`);
+                alert(`Applied ${successes.length} fixes. ${failures.length} failed. You can retry.`);
+            }
 
         } catch (error) {
             console.error('Error applying bulk fix:', error);
