@@ -1630,21 +1630,41 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 // Fix individual issue
 app.post('/api/fix-issue', async (req, res) => {
     try {
-        const { sessionId, issueId, overriddenFix } = req.body;
+        const { sessionId, issueId, overriddenFix, issue: issueSnapshot } = req.body || {};
 
         if (!sessionId || !issueId) {
             return res.status(400).json({ error: 'Session ID and Issue ID are required' });
         }
 
-        const session = sessionData.get(sessionId);
+        let session = sessionData.get(sessionId);
         if (!session) {
-            return res.status(404).json({ error: 'Session not found' });
+            // Stateless fallback: if a snapshot of the issue is provided, create a minimal session on-the-fly
+            if (issueSnapshot && issueSnapshot.id === issueId) {
+                session = {
+                    filename: 'unknown.csv',
+                    totalRows: 0,
+                    totalColumns: 0,
+                    issues: [issueSnapshot],
+                    fixedIssues: [],
+                    fileExtension: '.csv',
+                    uploadTime: new Date().toISOString()
+                };
+                sessionData.set(sessionId, session);
+            } else {
+                return res.status(404).json({ error: 'Session not found' });
+            }
         }
 
         // Find the issue
-        const issue = session.issues.find(issue => issue.id === issueId);
+        let issue = session.issues.find(i => i.id === issueId);
         if (!issue) {
-            return res.status(404).json({ error: 'Issue not found' });
+            // If not present in memory but we have a snapshot, use it
+            if (issueSnapshot && issueSnapshot.id === issueId) {
+                session.issues.push(issueSnapshot);
+                issue = issueSnapshot;
+            } else {
+                return res.status(404).json({ error: 'Issue not found' });
+            }
         }
 
         if (issue.fixed) {

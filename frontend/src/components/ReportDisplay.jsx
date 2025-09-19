@@ -104,10 +104,12 @@ const ReportDisplay = ({ data, onReset }) => {
                 setOverriddenFixes(updatedOverrides);
             }
 
-            const postFix = (issueId, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
+            const postFix = (issue, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
                 sessionId: data.sessionId,
-                issueId,
-                overriddenFix: overrideValue
+                issueId: issue.id,
+                overriddenFix: overrideValue,
+                // Include snapshot so backend can fix even if session was evicted
+                issue
             });
 
             const results = [];
@@ -119,7 +121,7 @@ const ReportDisplay = ({ data, onReset }) => {
                 const pushNext = () => {
                     while (inFlight.size < MAX_CONCURRENT && queue.length) {
                         const issue = queue.shift();
-                        const p = postFix(issue.id, isOverrideMode ? overriddenFix : undefined)
+                        const p = postFix(issue, isOverrideMode ? overriddenFix : undefined)
                             .then(r => ({ ok: true, value: r }))
                             .catch(e => ({ ok: false, reason: e }))
                             .finally(() => inFlight.delete(p));
