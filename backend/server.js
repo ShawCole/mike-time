@@ -667,6 +667,11 @@ const findInvalidCharacters = (text) => {
     return invalidChars;
 };
 
+// Compatibility helpers for storage-stream analysis (csv parser path)
+// Map legacy high-performance helpers to our canonical functions
+const getInvalidCharacters = (text) => findInvalidCharacters(text);
+const cleanValue = (text) => fixInvalidCharacters(text);
+
 const getCharacterDescription = (char) => {
     const charCode = char.charCodeAt(0);
 
