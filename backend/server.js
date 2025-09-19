@@ -16,8 +16,10 @@ const ExcelJS = require('exceljs');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Maximum allowed cell length (default 1,000,000 characters)
-const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '1000000', 10);
+// Maximum allowed cell length (default 100 characters)
+const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '100', 10);
+// Limit issues returned in HTTP response for GCS path to avoid huge payloads
+const ISSUE_PREVIEW_LIMIT = parseInt(process.env.ISSUE_PREVIEW_LIMIT || '20000', 10);
 // Allow diacritics/unicode letters by default (set ALLOW_DIACRITICS=false to disable)
 const ALLOW_DIACRITICS = (process.env.ALLOW_DIACRITICS || 'true').toLowerCase() !== 'false';
 // Per-request override support: ignore whitelist (defaults to false)
@@ -633,8 +635,16 @@ const isValidCharacter = (char) => {
     // Allow if explicitly whitelisted by user, unless caller asked to ignore whitelist
     if (!global.IGNORE_WHITELIST && whitelistedCharacters.has(char)) return true;
 
-    // If diacritics allowed, allow remaining characters
-    if (getAllowDiacritics()) return true;
+    // Curated ASCII punctuation always allowed when otherwise valid
+    const allowedPunctuation = new Set(['.', ',', ';', ':', '!', '?', '-', '_', '(', ')', '[', ']', '{', '}', '@', '#', '$', '%', '&', '*', '+', '=', '/', '<', '>', '|', '\\', '^', '~', '`', '\'', '"']);
+
+    // If diacritics are allowed, permit letters/marks, digits, space, and ASCII punctuation only
+    if (getAllowDiacritics()) {
+        const isLetterOrMark = /\p{L}|\p{M}/u.test(char);
+        if (isLetterOrMark) return true;
+        if ((code >= 48 && code <= 57) || char === ' ') return true;
+        return allowedPunctuation.has(char);
+    }
 
     // ASCII-only mode: allow alphanumerics, space, and a curated punctuation set
     if (
@@ -644,7 +654,6 @@ const isValidCharacter = (char) => {
         char === ' '
     ) return true;
 
-    const allowedPunctuation = new Set(['.', ',', ';', ':', '!', '?', '-', '_', '(', ')', '[', ']', '{', '}', '@', '#', '$', '%', '&', '*', '+', '=', '/', '<', '>', '|', '\\', '^', '~', '`', '\'', '"']);
     return allowedPunctuation.has(char);
 };
 
@@ -1182,6 +1191,15 @@ const processFileFromStorage = async (filename) => {
 
             const processingTime = Date.now() - startTime;
             console.log(`Analysis complete. Processed ${rowCount} rows, found ${issues.length} issues.`);
+            const invalidCount = issues.filter(i => i.type === 'invalid_characters').length;
+            const lengthCount = issues.filter(i => i.type === 'length_violation').length;
+            console.log('Validation summary:', {
+                invalidCharacterIssues: invalidCount,
+                lengthIssues: lengthCount,
+                maxCellLength: MAX_CELL_LENGTH,
+                allowDiacritics: getAllowDiacritics(),
+                ignoreWhitelist: global.IGNORE_WHITELIST
+            });
             console.log(`Processing time: ${processingTime}ms (${(processingTime / 1000).toFixed(2)}s)`);
             console.log(`Memory after processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
@@ -1235,29 +1253,37 @@ const analyzeRowForIssues = (row, headers, rowIndex) => {
             // Invalid characters check (optimized)
             const invalidChars = getInvalidCharacters(trimmedValue);
             if (invalidChars.length > 0) {
+                const excelCellRef = getExcelCellReference(rowIndex, colIndex);
                 issues.push({
                     id: `${rowIndex}-${colIndex}`,
-                    row: rowIndex,
+                    cellReference: excelCellRef,
+                    row: rowIndex + 1, // Excel row number for data rows (first data row is 2)
                     column: header,
                     originalValue: cellValue,
                     suggestedFix: cleanValue(trimmedValue),
-                    issues: [`Contains invalid characters: ${invalidChars.map(c => c.char).join(', ')}`],
-                    type: 'invalid_characters',
-                    severity: 'medium'
+                    problem: `Invalid characters: ${invalidChars.map(c => `'${c.char}' (${c.description})`).slice(0, 3).join(', ')}${invalidChars.length > 3 ? `, and ${invalidChars.length - 3} more` : ''}`,
+                    invalidCharacters: invalidChars,
+                    hasInvalidChars: true,
+                    hasLengthIssues: false,
+                    fixed: false,
                 });
             }
 
             // Length check (quick)
             if (trimmedValue.length > MAX_CELL_LENGTH) {
+                const excelCellRef = getExcelCellReference(rowIndex, colIndex);
                 issues.push({
                     id: `${rowIndex}-${colIndex}-length`,
-                    row: rowIndex,
+                    cellReference: excelCellRef,
+                    row: rowIndex + 1, // Excel row number for data rows (first data row is 2)
                     column: header,
                     originalValue: cellValue,
                     suggestedFix: trimmedValue.substring(0, MAX_CELL_LENGTH) + '...',
-                    issues: [`Value too long (${trimmedValue.length} characters, max ${MAX_CELL_LENGTH})`],
-                    type: 'length_violation',
-                    severity: 'low'
+                    problem: `Length exceeds ${MAX_CELL_LENGTH} characters (${trimmedValue.length} chars)`,
+                    invalidCharacters: [],
+                    hasInvalidChars: false,
+                    hasLengthIssues: true,
+                    fixed: false,
                 });
             }
         }
@@ -1321,6 +1347,12 @@ app.post('/api/process-from-storage', async (req, res) => {
         updateProgress(id, 2, 'Starting processing from storage...');
 
         console.log(`Processing large file from Cloud Storage: ${filename}`);
+        console.log('Request flags:', {
+            allowDiacritics,
+            ignoreWhitelist,
+            defaultAllowDiacritics: ALLOW_DIACRITICS,
+            currentIgnoreWhitelist: global.IGNORE_WHITELIST
+        });
 
         // Decide by extension
         const lower = filename.toLowerCase();
@@ -1360,11 +1392,64 @@ app.post('/api/process-from-storage', async (req, res) => {
         if (typeof allowDiacritics === 'boolean') global.ALLOW_DIACRITICS = allowDiacritics;
         const prevIgnore = global.IGNORE_WHITELIST;
         if (typeof ignoreWhitelist === 'boolean') global.IGNORE_WHITELIST = ignoreWhitelist;
+        console.log('Effective validation flags for this run:', {
+            ALLOW_DIACRITICS: global.ALLOW_DIACRITICS,
+            IGNORE_WHITELIST: global.IGNORE_WHITELIST
+        });
         const result = await processFileFromStorage(filename);
+
+        // Persist to a session for subsequent fix/download operations
+        const sessionId = Date.now().toString();
+        sessionData.set(sessionId, {
+            filename,
+            totalRows: result.totalRows,
+            totalColumns: result.totalColumns,
+            issues: result.issues,
+            fixedIssues: [],
+            fileExtension: '.csv',
+            uploadTime: new Date().toISOString()
+        });
+
+        // Prepare reduced response to avoid oversized payloads
+        let responseBody;
+        try {
+            const totalIssues = Array.isArray(result.issues) ? result.issues.length : 0;
+            const preview = totalIssues > ISSUE_PREVIEW_LIMIT
+                ? result.issues.slice(0, ISSUE_PREVIEW_LIMIT)
+                : result.issues;
+            responseBody = {
+                success: true,
+                filename: filename,
+                totalRows: result.totalRows,
+                totalColumns: result.totalColumns,
+                issues: preview,
+                issueCount: totalIssues,
+                processingTimeMs: result.processingTimeMs,
+                fileSizeMB: result.fileSizeMB,
+                sessionId,
+                maxCellLength: MAX_CELL_LENGTH,
+                truncated: totalIssues > ISSUE_PREVIEW_LIMIT
+            };
+        } catch (respErr) {
+            console.warn('Response construction error, returning minimal payload:', respErr);
+            responseBody = {
+                success: true,
+                filename: filename,
+                totalRows: result.totalRows,
+                totalColumns: result.totalColumns,
+                issues: [],
+                issueCount: Array.isArray(result.issues) ? result.issues.length : 0,
+                processingTimeMs: result.processingTimeMs,
+                fileSizeMB: result.fileSizeMB,
+                sessionId,
+                maxCellLength: MAX_CELL_LENGTH,
+                truncated: true
+            };
+        }
         global.ALLOW_DIACRITICS = prevAllow;
         global.IGNORE_WHITELIST = prevIgnore;
         updateProgress(id, 100, 'Analysis complete!');
-        res.json({ ...result, progressId: id, maxCellLength: MAX_CELL_LENGTH });
+        res.json({ ...responseBody, progressId: id });
     } catch (error) {
         console.error('Error processing file from storage:', error);
         res.status(500).json({ error: 'Failed to process file from storage' });

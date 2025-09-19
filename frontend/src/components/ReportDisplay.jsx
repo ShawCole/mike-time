@@ -622,7 +622,14 @@ const ReportDisplay = ({ data, onReset }) => {
 
     const totalPages = Math.ceil(filteredData.length / pageSize);
 
-    const remainingIssues = issues.filter(issue => !issue.fixed).length;
+    // Totals: prefer server-provided count (full) over preview length
+    const totalIssueCount = useMemo(() => {
+        if (typeof data.issueCount === 'number') return data.issueCount;
+        return Array.isArray(issues) ? issues.length : 0;
+    }, [data.issueCount, issues]);
+
+    // Remaining = total issues - fixed issues (changes)
+    const remainingIssues = Math.max(0, totalIssueCount - changes.length);
 
     const goToPage = (page) => {
         setCurrentPage(Math.max(1, Math.min(page, totalPages)));
@@ -644,22 +651,22 @@ const ReportDisplay = ({ data, onReset }) => {
                         <span className="stat-label">Total Columns</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{data.issueCount.toLocaleString()}</span>
+                        <span className="stat-number">{totalIssueCount.toLocaleString()}</span>
                         <span className="stat-label">Quality Issues</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{remainingIssues}</span>
+                        <span className="stat-number">{remainingIssues.toLocaleString()}</span>
                         <span className="stat-label">Remaining Issues</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{changes.length}</span>
+                        <span className="stat-number">{changes.length.toLocaleString()}</span>
                         <span className="stat-label">Fixed Issues</span>
                     </div>
                 </div>
             </div>
 
             <div className="report-content">
-                {data.issueCount === 0 ? (
+                {totalIssueCount === 0 ? (
                     <div style={{ textAlign: 'center', padding: '3rem' }}>
                         <h3 style={{ color: '#48bb78', marginBottom: '1rem' }}>✅ No Data Quality Issues Found!</h3>
                         <p style={{ color: '#666', marginBottom: '2rem' }}>
@@ -721,6 +728,13 @@ const ReportDisplay = ({ data, onReset }) => {
                                 🔄 Analyze New File
                             </button>
                         </div>
+
+                        {/* Truncated preview notice */}
+                        {data.truncated && (
+                            <div style={{ margin: '0.75rem 0 1rem 0', padding: '0.75rem 1rem', background: '#fffbea', border: '1px solid #f6e05e', color: '#744210', borderRadius: '6px' }}>
+                                Showing the first {issues.length.toLocaleString()} of {totalIssueCount.toLocaleString()} issues. The full list is stored on the server for fixing and downloads.
+                            </div>
+                        )}
 
                         {filteredData.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '2rem' }}>

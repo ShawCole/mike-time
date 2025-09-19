@@ -100,9 +100,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             // Normalize response (ensure issueCount present for UI)
             const normalized = {
                 ...response.data,
-                issueCount: Array.isArray(response.data?.issues)
-                    ? response.data.issues.length
-                    : (response.data?.issueCount || 0)
+                issueCount: (typeof response.data?.issueCount === 'number')
+                    ? response.data.issueCount
+                    : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0)
             };
 
             // Small delay to show completion
@@ -155,9 +155,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
         // Normalize response (ensure issueCount present for UI)
         const normalized = {
             ...response.data,
-            issueCount: Array.isArray(response.data?.issues)
-                ? response.data.issues.length
-                : (response.data?.issueCount || 0)
+            issueCount: (typeof response.data?.issueCount === 'number')
+                ? response.data.issueCount
+                : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0)
         };
 
         // Small delay to show completion
