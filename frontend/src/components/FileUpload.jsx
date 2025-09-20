@@ -102,10 +102,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 progressId: progressId,
                 allowDiacritics: !!allowDiacritics,
                 ignoreWhitelist: !allowDiacritics ? true : false
-            }, {
-                timeout: 3600000, // 1 hour timeout for processing
-                headers: { 'Cache-Control': 'no-store' }
-            });
+            }, { timeout: 3600000 });
 
             setProcessingProgress(100);
 
