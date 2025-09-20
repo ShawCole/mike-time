@@ -15,6 +15,8 @@ const ExcelJS = require('exceljs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+// Disable ETag to avoid 304 cache responses for dynamic endpoints like /api/progress
+app.set('etag', false);
 
 // Maximum allowed cell length (default 100 characters)
 const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '100', 10);
@@ -1411,6 +1413,7 @@ app.post('/api/process-from-storage', async (req, res) => {
             IGNORE_WHITELIST: global.IGNORE_WHITELIST
         });
         const result = await processFileFromStorage(filename, id);
+        updateProgress(id, 99, `Enhancing ${result.issues.length.toLocaleString()} issues with learned patterns...`);
 
         // Persist to a session for subsequent fix/download operations
         const sessionId = Date.now().toString();
@@ -2319,14 +2322,21 @@ setInterval(() => {
 app.get('/api/progress/:sessionId', (req, res) => {
     const { sessionId } = req.params;
     const p = sessionProgress.get(sessionId) || { percent: 0, log: '' };
-    res.json({ sessionId, ...p });
+    // Prevent caches and CDNs from serving stale 304/Not Modified
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.status(200).json({ sessionId, ...p });
 });
 
 // Progress API: start a new progress session
 app.post('/api/progress/start', (req, res) => {
     const progressId = Date.now().toString();
     sessionProgress.set(progressId, { percent: 0, log: 'Starting...', updatedAt: Date.now() });
-    res.json({ progressId });
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.status(200).json({ progressId });
 });
 
 app.listen(PORT, () => {

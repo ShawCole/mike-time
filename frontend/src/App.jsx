@@ -52,7 +52,12 @@ function App() {
     progressIntervalRef.current = setInterval(async () => {
       try {
         if (!sessionId) return;
-        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/progress/${sessionId}`);
+        const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/progress/${sessionId}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-store'
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           if (typeof data.percent === 'number') setProgressPercentage(data.percent);
