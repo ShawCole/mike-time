@@ -1122,7 +1122,7 @@ const getCSVRowCount = (filePath) => {
 };
 
 // High-performance file processing from Cloud Storage
-const processFileFromStorage = async (filename) => {
+const processFileFromStorage = async (filename, progressId) => {
     const startTime = Date.now();
     const file = bucket.file(filename);
 
@@ -1150,8 +1150,16 @@ const processFileFromStorage = async (filename) => {
 
     return new Promise((resolve, reject) => {
         // Use robust streaming CSV parser for GCS files (tolerant to BOM and odd quoting)
-        const csvStream = file.createReadStream()
-            .pipe(csv());
+        const rawStream = file.createReadStream();
+        let bytesRead = 0;
+        rawStream.on('data', (chunk) => {
+            bytesRead += chunk.length;
+            if (progressId && metadata.size) {
+                const pct = Math.min(99, Math.floor((bytesRead / metadata.size) * 99));
+                updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} rows so far`);
+            }
+        });
+        const csvStream = rawStream.pipe(csv());
 
         csvStream.on('headers', (headerList) => {
             headers = headerList;
@@ -1173,6 +1181,10 @@ const processFileFromStorage = async (filename) => {
                 if (rowCount % 50000 === 0) {
                     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
                     console.log(`Processed ${rowCount} rows, found ${issues.length} issues so far. Memory usage: ${memoryUsage}MB`);
+                    if (progressId && metadata.size) {
+                        const pct = Math.min(99, Math.floor((rowCount / Math.max(1, rowCount)) * 99));
+                        updateProgress(progressId, pct, `Processed ${rowCount.toLocaleString()} rows...`);
+                    }
 
                     // Force garbage collection if available
                     if (global.gc) {
@@ -1207,6 +1219,8 @@ const processFileFromStorage = async (filename) => {
             if (!process.env.GCS_KEEP_FILES || process.env.GCS_KEEP_FILES !== 'true') {
                 file.delete().catch(err => console.warn('Failed to delete file from storage:', err));
             }
+
+            if (progressId) updateProgress(progressId, 100, `Analysis complete. ${rowCount.toLocaleString()} rows processed.`);
 
             resolve({
                 success: true,
@@ -1396,7 +1410,7 @@ app.post('/api/process-from-storage', async (req, res) => {
             ALLOW_DIACRITICS: global.ALLOW_DIACRITICS,
             IGNORE_WHITELIST: global.IGNORE_WHITELIST
         });
-        const result = await processFileFromStorage(filename);
+        const result = await processFileFromStorage(filename, id);
 
         // Persist to a session for subsequent fix/download operations
         const sessionId = Date.now().toString();
@@ -1486,7 +1500,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
         if (fileExtension === '.csv') {
             // Use streaming analysis for CSV files with progress
-            const sessionIdTemp = Date.now().toString();
+            const sessionIdTemp = progressId; // use client-provided progress id for continuity
             updateProgress(sessionIdTemp, 5, 'Reading CSV headers...');
             const prevAllow = ALLOW_DIACRITICS;
             const prevIgnore = global.IGNORE_WHITELIST;
@@ -1604,7 +1618,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
                 heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
                 heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024)
             },
-            maxCellLength: MAX_CELL_LENGTH
+            maxCellLength: MAX_CELL_LENGTH,
+            progressId: sessionId // progress now tracked under final session id
         });
 
     } catch (error) {
@@ -1630,41 +1645,21 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 // Fix individual issue
 app.post('/api/fix-issue', async (req, res) => {
     try {
-        const { sessionId, issueId, overriddenFix, issue: issueSnapshot } = req.body || {};
+        const { sessionId, issueId, overriddenFix } = req.body;
 
         if (!sessionId || !issueId) {
             return res.status(400).json({ error: 'Session ID and Issue ID are required' });
         }
 
-        let session = sessionData.get(sessionId);
+        const session = sessionData.get(sessionId);
         if (!session) {
-            // Stateless fallback: if a snapshot of the issue is provided, create a minimal session on-the-fly
-            if (issueSnapshot && issueSnapshot.id === issueId) {
-                session = {
-                    filename: 'unknown.csv',
-                    totalRows: 0,
-                    totalColumns: 0,
-                    issues: [issueSnapshot],
-                    fixedIssues: [],
-                    fileExtension: '.csv',
-                    uploadTime: new Date().toISOString()
-                };
-                sessionData.set(sessionId, session);
-            } else {
-                return res.status(404).json({ error: 'Session not found' });
-            }
+            return res.status(404).json({ error: 'Session not found' });
         }
 
         // Find the issue
-        let issue = session.issues.find(i => i.id === issueId);
+        const issue = session.issues.find(issue => issue.id === issueId);
         if (!issue) {
-            // If not present in memory but we have a snapshot, use it
-            if (issueSnapshot && issueSnapshot.id === issueId) {
-                session.issues.push(issueSnapshot);
-                issue = issueSnapshot;
-            } else {
-                return res.status(404).json({ error: 'Issue not found' });
-            }
+            return res.status(404).json({ error: 'Issue not found' });
         }
 
         if (issue.fixed) {
@@ -1877,6 +1872,40 @@ app.get('/api/session/:sessionId', (req, res) => {
             error: 'Error retrieving session',
             details: error.message
         });
+    }
+});
+
+// Paginated issues retrieval (to go beyond preview limit without huge payloads)
+app.get('/api/issues/:sessionId', (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const { offset = '0', limit = '20000', onlyUnfixed = 'true' } = req.query || {};
+
+        const session = sessionData.get(sessionId);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const start = Math.max(0, parseInt(offset, 10) || 0);
+        const max = Math.min(20000, Math.max(1, parseInt(limit, 10) || 20000));
+        const filterUnfixed = String(onlyUnfixed).toLowerCase() !== 'false';
+
+        const source = filterUnfixed ? session.issues.filter(i => !i.fixed) : session.issues;
+        const slice = source.slice(start, start + max);
+
+        res.json({
+            success: true,
+            sessionId,
+            issues: slice,
+            returned: slice.length,
+            offset: start,
+            nextOffset: start + slice.length,
+            total: source.length,
+            issueCount: session.issues.length
+        });
+    } catch (error) {
+        console.error('Error retrieving paginated issues:', error);
+        res.status(500).json({ error: 'Error retrieving issues', details: error.message });
     }
 });
 

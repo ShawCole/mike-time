@@ -20,7 +20,17 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
     const uploadFile = async (file) => {
         try {
-            onLoadingChange(true);
+            // Request a progress id up-front so the app can poll immediately
+            try {
+                const p = await axios.post(API_ENDPOINTS.progressStart);
+                if (p.data?.progressId) {
+                    onLoadingChange(true, p.data.progressId);
+                } else {
+                    onLoadingChange(true);
+                }
+            } catch (_) {
+                onLoadingChange(true);
+            }
             setUploadProgress(0);
             setProcessingProgress(0);
 
@@ -64,6 +74,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             });
 
             const { uploadUrl, filename, progressId } = signedUrlResponse.data;
+            onLoadingChange(true, progressId);
 
             // Step 2: Upload directly to Cloud Storage
             setCurrentStage('uploading');
@@ -102,7 +113,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 ...response.data,
                 issueCount: (typeof response.data?.issueCount === 'number')
                     ? response.data.issueCount
-                    : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0)
+                    : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0),
+                // ensure progressId is available for App to poll
+                progressId: response.data?.progressId || progressId
             };
 
             // Small delay to show completion
@@ -131,6 +144,15 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
         formData.append('allowDiacritics', String(allowDiacritics));
         formData.append('ignoreWhitelist', String(!allowDiacritics));
 
+        // Ensure progress is tracked under a progress id
+        try {
+            const p = await axios.post(API_ENDPOINTS.progressStart);
+            if (p.data?.progressId) {
+                formData.append('progressId', p.data.progressId);
+                onLoadingChange(true, p.data.progressId);
+            }
+        } catch (_) { }
+
         const response = await axios.post(API_ENDPOINTS.upload, formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
@@ -157,7 +179,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             ...response.data,
             issueCount: (typeof response.data?.issueCount === 'number')
                 ? response.data.issueCount
-                : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0)
+                : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0),
+            progressId: response.data?.progressId || formData.get('progressId') || undefined
         };
 
         // Small delay to show completion

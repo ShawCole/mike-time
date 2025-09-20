@@ -7,6 +7,8 @@ const ReportDisplay = ({ data, onReset }) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize] = useState(25);
     const [issues, setIssues] = useState(data.issues || []);
+    const [issuesOffset, setIssuesOffset] = useState(Array.isArray(data.issues) ? data.issues.length : 0);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [changes, setChanges] = useState([]);
     const [isFixingAll, setIsFixingAll] = useState(false);
     const [showChanges, setShowChanges] = useState(false);
@@ -83,6 +85,33 @@ const ReportDisplay = ({ data, onReset }) => {
         checkNewIssues();
     }, [data.sessionId]);
 
+    // Auto-fetch next page of issues when we fixed all currently loaded but there are more overall
+    useEffect(() => {
+        const remainingLoaded = issues.filter(i => !i.fixed).length;
+        if (remainingLoaded === 0 && (typeof data.issueCount === 'number') && issues.length < data.issueCount) {
+            // load next page automatically
+            loadMoreIssues();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [issues, data.issueCount]);
+
+    const loadMoreIssues = async () => {
+        if (!data.sessionId) return;
+        if (isLoadingMore) return;
+        setIsLoadingMore(true);
+        try {
+            const res = await axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, issuesOffset, 20000, true));
+            if (res.data?.issues?.length) {
+                setIssues(prev => [...prev, ...res.data.issues]);
+                setIssuesOffset(prev => prev + res.data.issues.length);
+            }
+        } catch (e) {
+            console.warn('Failed to load more issues page:', e);
+        } finally {
+            setIsLoadingMore(false);
+        }
+    };
+
     // Handle bulk apply modal confirmation
     const handleBulkOverrideConfirm = async () => {
         const { currentIssue, similarIssues, overriddenFix, isOverrideMode } = bulkOverrideData;
@@ -104,12 +133,10 @@ const ReportDisplay = ({ data, onReset }) => {
                 setOverriddenFixes(updatedOverrides);
             }
 
-            const postFix = (issue, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
+            const postFix = (issueId, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
                 sessionId: data.sessionId,
-                issueId: issue.id,
-                overriddenFix: overrideValue,
-                // Include snapshot so backend can fix even if session was evicted
-                issue
+                issueId,
+                overriddenFix: overrideValue
             });
 
             const results = [];
@@ -121,7 +148,7 @@ const ReportDisplay = ({ data, onReset }) => {
                 const pushNext = () => {
                     while (inFlight.size < MAX_CONCURRENT && queue.length) {
                         const issue = queue.shift();
-                        const p = postFix(issue, isOverrideMode ? overriddenFix : undefined)
+                        const p = postFix(issue.id, isOverrideMode ? overriddenFix : undefined)
                             .then(r => ({ ok: true, value: r }))
                             .catch(e => ({ ok: false, reason: e }))
                             .finally(() => inFlight.delete(p));
@@ -1065,6 +1092,15 @@ const ReportDisplay = ({ data, onReset }) => {
                                             disabled={currentPage === totalPages}
                                         >
                                             Next →
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Load more block for truncated sessions */}
+                                {data.truncated && issues.length < totalIssueCount && (
+                                    <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                                        <button className="btn btn-primary" onClick={loadMoreIssues} disabled={isLoadingMore}>
+                                            {isLoadingMore ? 'Loading more…' : `Load next ${Math.min(20000, totalIssueCount - issues.length).toLocaleString()} issues`}
                                         </button>
                                     </div>
                                 )}

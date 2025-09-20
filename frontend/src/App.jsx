@@ -76,16 +76,16 @@ function App() {
     setCurrentLogLine('');
   };
 
-  // Start progress simulation when loading begins
+  // Start progress polling when loading begins
   useEffect(() => {
-    if (isLoading && reportData?.sessionId) {
-      startProgressSimulation(reportData.sessionId);
+    if (isLoading && reportData?.progressId) {
+      startProgressSimulation(reportData.progressId);
     } else {
       stopProgressSimulation();
     }
 
     return () => stopProgressSimulation();
-  }, [isLoading, reportData?.sessionId]);
+  }, [isLoading, reportData?.progressId]);
 
   const handleFileUpload = (data) => {
     setReportData(data);
@@ -97,8 +97,12 @@ function App() {
     setReportData(null);
   };
 
-  const handleLoadingState = (loading) => {
+  const handleLoadingState = (loading, progressId) => {
     setIsLoading(loading);
+    if (progressId) {
+      // Ensure we have a progressId to poll before final report arrives
+      setReportData(prev => ({ ...(prev || {}), progressId }));
+    }
   };
 
   const resetApp = () => {
