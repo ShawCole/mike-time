@@ -2290,6 +2290,22 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Client log ingestion (to capture frontend runtime errors)
+app.post('/api/client-log', (req, res) => {
+    try {
+        const { level = 'info', message = '', stack = '', meta = {} } = req.body || {};
+        const stamp = new Date().toISOString();
+        const safeMeta = typeof meta === 'object' ? JSON.stringify(meta) : String(meta);
+        const line = `[client][${level}] ${stamp} ${message} ${stack ? `\nstack: ${stack}` : ''} ${safeMeta ? `\nmeta: ${safeMeta}` : ''}`;
+        if (level === 'error' || level === 'warn') console.error(line);
+        else console.log(line);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('Error ingesting client log:', e);
+        res.status(500).json({ ok: false });
+    }
+});
+
 // Error handling middleware
 app.use((error, req, res, next) => {
     if (error instanceof multer.MulterError) {

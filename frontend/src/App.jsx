@@ -3,6 +3,7 @@ import FileUpload from './components/FileUpload';
 import ReportDisplay from './components/ReportDisplay';
 import LearningDashboard from './components/LearningDashboard';
 import './App.css';
+import { API_ENDPOINTS } from './config/api';
 
 function App() {
   const [reportData, setReportData] = useState(null);
@@ -86,6 +87,44 @@ function App() {
 
     return () => stopProgressSimulation();
   }, [isLoading, reportData?.progressId]);
+
+  // Ship client errors to backend for diagnosis
+  useEffect(() => {
+    const onError = (event) => {
+      try {
+        fetch(`${API_ENDPOINTS.health.replace('/api/health','')}/api/client-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'error',
+            message: event?.message || 'window.onerror',
+            stack: event?.error?.stack || '',
+            meta: { source: event?.filename, line: event?.lineno, col: event?.colno }
+          })
+        }).catch(() => {});
+      } catch (_) {}
+    };
+    const onRejection = (event) => {
+      try {
+        fetch(`${API_ENDPOINTS.health.replace('/api/health','')}/api/client-log`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            level: 'error',
+            message: 'unhandledrejection',
+            stack: event?.reason?.stack || String(event?.reason || ''),
+            meta: {}
+          })
+        }).catch(() => {});
+      } catch (_) {}
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
 
   const handleFileUpload = (data) => {
     setReportData(data);
