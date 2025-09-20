@@ -125,82 +125,37 @@ const ReportDisplay = ({ data, onReset }) => {
             setIsBulkApplying(true);
             setBulkApplyCompleted(0);
             setBulkApplyTotal((similarIssues?.length || 0) + 1);
-            // Determine the fix to apply
-            const fixToApply = isOverrideMode ? overriddenFix : currentIssue.suggestedFix;
 
-            // Apply fix to all similar issues in controlled batches to avoid flooding the API
-            const MAX_CONCURRENT = 20;
-            const BATCH_SIZE = 200;
-
-            // Optionally pre-mark overrides client-side for UX
-            if (isOverrideMode) {
-                const updatedOverrides = { ...overriddenFixes };
-                similarIssues.forEach(issue => {
-                    updatedOverrides[issue.id] = overriddenFix;
-                });
-                setOverriddenFixes(updatedOverrides);
-            }
-
-            const postFix = (issueId, overrideValue) => axios.post(API_ENDPOINTS.fixIssue, {
+            // Build bulk payload for similar issues
+            const issueIds = similarIssues.map(issue => issue.id);
+            const payload = {
                 sessionId: data.sessionId,
-                issueId,
-                overriddenFix: overrideValue
-            });
-
-            const results = [];
-            let completedCount = 0;
-            for (let i = 0; i < similarIssues.length; i += BATCH_SIZE) {
-                const batch = similarIssues.slice(i, i + BATCH_SIZE);
-                // Concurrency limiter within the batch
-                const queue = [...batch];
-                const inFlight = new Set();
-                const pushNext = () => {
-                    while (inFlight.size < MAX_CONCURRENT && queue.length) {
-                        const issue = queue.shift();
-                        const p = postFix(issue.id, isOverrideMode ? overriddenFix : undefined)
-                            .then(r => ({ ok: true, value: r }))
-                            .catch(e => ({ ok: false, reason: e }))
-                            .finally(() => {
-                                inFlight.delete(p);
-                                completedCount += 1;
-                                // Throttle renders
-                                if (completedCount % 50 === 0 || completedCount === similarIssues.length) {
-                                    setBulkApplyCompleted(completedCount);
-                                }
-                            });
-                        inFlight.add(p);
-                    }
-                };
-                pushNext();
-                while (inFlight.size > 0 || queue.length > 0) {
-                    // Wait for any inFlight to settle
-                    // eslint-disable-next-line no-await-in-loop
-                    const settled = await Promise.race(inFlight);
-                    results.push(settled);
-                    pushNext();
-                }
+                issueIds
+            };
+            if (isOverrideMode && overriddenFix) {
+                payload.overriddenFix = overriddenFix;
             }
 
-            const successes = results.filter(r => r.ok).map(r => r.value);
-            const failures = results.filter(r => !r.ok);
+            const resp = await axios.post(API_ENDPOINTS.fixIssuesBulk, payload);
 
-            // Update issues and changes for successful responses
-            const fixedIssueIds = successes.map(resp => resp.data.fixedIssue?.id).filter(Boolean);
-            const newChanges = successes.map(resp => resp.data.fixedIssue).filter(Boolean);
+            const fixedIssuesArray = Array.isArray(resp?.data?.fixedIssues) ? resp.data.fixedIssues : [];
+            const fixedIdsSet = new Set(fixedIssuesArray.map(fi => fi.id));
 
-            if (fixedIssueIds.length > 0) {
+            if (fixedIssuesArray.length > 0) {
                 setIssues(prevIssues =>
                     prevIssues.map(issue =>
-                        fixedIssueIds.includes(issue.id)
-                            ? { ...issue, fixed: true, fixedAt: new Date().toISOString() }
+                        fixedIdsSet.has(issue.id)
+                            ? { ...issue, fixed: true, fixedAt: new Date().toISOString(), suggestedFix: (isOverrideMode && overriddenFix) ? overriddenFix : issue.suggestedFix }
                             : issue
                     )
                 );
-
-                setChanges(prevChanges => [...prevChanges, ...newChanges]);
+                setChanges(prevChanges => [...prevChanges, ...fixedIssuesArray]);
             }
 
-            // Close modal
+            // Progress bar completion for the bulk portion
+            setBulkApplyCompleted(similarIssues.length);
+
+            // Close modal UI state
             setShowBulkOverrideModal(false);
             setBulkOverrideData({
                 currentIssue: null,
@@ -210,13 +165,17 @@ const ReportDisplay = ({ data, onReset }) => {
                 isOverrideMode: false
             });
 
-            // Now fix the original issue
+            // Fix the original issue as a single call (keeps existing behavior)
             await handleFixIssueInternal(currentIssue.id, isOverrideMode ? overriddenFix : undefined);
             setBulkApplyCompleted(prev => Math.min(prev + 1, bulkApplyTotal));
 
-            if (failures.length > 0) {
-                console.warn(`Bulk fix completed with ${failures.length} failures out of ${similarIssues.length}.`);
-                alert(`Applied ${successes.length} fixes. ${failures.length} failed. You can retry.`);
+            const totalRequested = issueIds.length;
+            const applied = fixedIssuesArray.length;
+            const alreadyFixed = Array.isArray(resp?.data?.alreadyFixedIds) ? resp.data.alreadyFixedIds.length : 0;
+            const notFound = Array.isArray(resp?.data?.notFoundIds) ? resp.data.notFoundIds.length : 0;
+            const failed = Math.max(0, totalRequested - applied - alreadyFixed - notFound);
+            if (failed > 0 || notFound > 0) {
+                alert(`Applied ${applied} fixes. ${failed + notFound} did not apply. You can retry.`);
             }
 
         } catch (error) {
@@ -242,15 +201,19 @@ const ReportDisplay = ({ data, onReset }) => {
                     console.warn('not-an-issue endpoint unavailable on backend; proceeding without persisting whitelist');
                 }
             }
-            const fixPromises = similarIssues.map(sim => axios.post(API_ENDPOINTS.fixIssue, {
+
+            const issueIds = similarIssues.map(sim => sim.id);
+            const resp = await axios.post(API_ENDPOINTS.fixIssuesBulk, {
                 sessionId: data.sessionId,
-                issueId: sim.id,
-                overriddenFix: sim.originalValue
-            }));
-            const responses = await Promise.all(fixPromises);
-            const fixedIds = new Set(similarIssues.map(s => s.id));
-            setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: i.originalValue, fixedAt: new Date().toISOString() } : i));
-            setChanges(prev => [...prev, ...responses.map(r => r.data.fixedIssue)]);
+                issueIds,
+                overriddenFix: currentIssue.originalValue
+            });
+
+            const fixedIssuesArray = Array.isArray(resp?.data?.fixedIssues) ? resp.data.fixedIssues : [];
+            const fixedIds = new Set(fixedIssuesArray.map(fi => fi.id));
+
+            setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: currentIssue.originalValue, fixedAt: new Date().toISOString() } : i));
+            setChanges(prev => [...prev, ...fixedIssuesArray]);
         } catch (e) {
             console.error('Not An Issue confirm failed:', e);
             alert('Failed to apply Not An Issue.');

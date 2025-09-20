@@ -7,6 +7,7 @@ export const API_ENDPOINTS = {
     processFromStorage: `${API_BASE_URL}/api/process-from-storage`,
     progressStart: `${API_BASE_URL}/api/progress/start`,
     fixIssue: `${API_BASE_URL}/api/fix-issue`,
+    fixIssuesBulk: `${API_BASE_URL}/api/fix-issues-bulk`,
     fixAll: `${API_BASE_URL}/api/fix-all`,
     checkNewIssues: `${API_BASE_URL}/api/check-new-issues`,
     downloadIssues: (sessionId) => `${API_BASE_URL}/api/download-issues/${sessionId}`,
