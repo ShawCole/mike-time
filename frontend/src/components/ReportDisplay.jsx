@@ -693,6 +693,10 @@ const ReportDisplay = ({ data, onReset }) => {
 
     // Remaining = total issues - fixed issues (changes)
     const remainingIssues = Math.max(0, totalIssueCount - changes.length);
+    const formatNumber = (n) => {
+        const num = typeof n === 'number' && isFinite(n) ? n : 0;
+        try { return num.toLocaleString(); } catch { return String(num); }
+    };
 
     const goToPage = (page) => {
         setCurrentPage(Math.max(1, Math.min(page, totalPages)));
@@ -706,7 +710,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
                 <div className="report-stats">
                     <div className="stat-card">
-                        <span className="stat-number">{data.totalRows.toLocaleString()}</span>
+                        <span className="stat-number">{formatNumber(data.totalRows)}</span>
                         <span className="stat-label">Total Rows</span>
                     </div>
                     <div className="stat-card">
@@ -714,15 +718,15 @@ const ReportDisplay = ({ data, onReset }) => {
                         <span className="stat-label">Total Columns</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{totalIssueCount.toLocaleString()}</span>
+                        <span className="stat-number">{formatNumber(totalIssueCount)}</span>
                         <span className="stat-label">Quality Issues</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{remainingIssues.toLocaleString()}</span>
+                        <span className="stat-number">{formatNumber(remainingIssues)}</span>
                         <span className="stat-label">Remaining Issues</span>
                     </div>
                     <div className="stat-card">
-                        <span className="stat-number">{changes.length.toLocaleString()}</span>
+                        <span className="stat-number">{formatNumber(changes.length)}</span>
                         <span className="stat-label">Fixed Issues</span>
                     </div>
                 </div>
@@ -795,7 +799,7 @@ const ReportDisplay = ({ data, onReset }) => {
                         {/* Truncated preview notice */}
                         {data.truncated && (
                             <div style={{ margin: '0.75rem 0 1rem 0', padding: '0.75rem 1rem', background: '#fffbea', border: '1px solid #f6e05e', color: '#744210', borderRadius: '6px' }}>
-                                Showing the first {issues.length.toLocaleString()} of {totalIssueCount.toLocaleString()} issues. The full list is stored on the server for fixing and downloads.
+                                Showing the first {formatNumber(issues.length)} of {formatNumber(totalIssueCount)} issues. The full list is stored on the server for fixing and downloads.
                             </div>
                         )}
 
