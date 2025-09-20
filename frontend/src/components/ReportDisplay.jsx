@@ -38,6 +38,11 @@ const ReportDisplay = ({ data, onReset }) => {
     const [bulkApplyCompleted, setBulkApplyCompleted] = useState(0);
     const [bulkApplyTotal, setBulkApplyTotal] = useState(0);
 
+    // Fix All overlay state
+    const [isFixAllApplying, setIsFixAllApplying] = useState(false);
+    const [fixAllCompleted, setFixAllCompleted] = useState(0);
+    const [fixAllTotal, setFixAllTotal] = useState(0);
+
     // Not An Issue modal state
     const [showNotIssueModal, setShowNotIssueModal] = useState(false);
     const [notIssueData, setNotIssueData] = useState({
@@ -527,28 +532,59 @@ const ReportDisplay = ({ data, onReset }) => {
 
     const handleFixAll = async () => {
         setIsFixingAll(true);
+        setIsFixAllApplying(true);
+        setFixAllCompleted(0);
+        // Estimate total from remaining issues if available
+        const totalEst = Math.max(0, (typeof data.issueCount === 'number' ? data.issueCount : (Array.isArray(issues) ? issues.length : 0)) - changes.length);
+        setFixAllTotal(totalEst);
         try {
-            const response = await axios.post(API_ENDPOINTS.fixAll, {
-                sessionId: data.sessionId
-            });
+            // Sequentially process pages of 20,000 unfixed issues until none remain
+            const PAGE_LIMIT = 20000;
+            // Safety cap to avoid infinite loops
+            let safetyIterations = 1000;
+            // eslint-disable-next-line no-constant-condition
+            while (true && safetyIterations-- > 0) {
+                // Always request from offset 0, only unfixed, so pagination adjusts as server state changes
+                const pageRes = await axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, 0, PAGE_LIMIT, true));
+                const pageIssues = Array.isArray(pageRes?.data?.issues) ? pageRes.data.issues : [];
+                if (pageIssues.length === 0) break;
 
-            if (response.data.success) {
-                // Mark all issues as fixed
-                setIssues(prevIssues =>
-                    prevIssues.map(issue => ({ ...issue, fixed: true }))
-                );
+                const issueIds = pageIssues.filter(i => !i.fixed).map(i => i.id);
+                if (issueIds.length === 0) break;
 
-                // Add all changes
-                setChanges(prevChanges => [...prevChanges, ...response.data.fixedIssues || []]);
+                const bulkRes = await axios.post(API_ENDPOINTS.fixIssuesBulk, {
+                    sessionId: data.sessionId,
+                    issueIds
+                });
 
-                // Switch to changes view
-                setShowChanges(true);
+                const fixedIssuesArray = Array.isArray(bulkRes?.data?.fixedIssues) ? bulkRes.data.fixedIssues : [];
+                const fixedIdsSet = new Set(fixedIssuesArray.map(fi => fi.id));
+
+                // Update local state for issues currently loaded in the UI
+                if (fixedIdsSet.size > 0) {
+                    setIssues(prevIssues =>
+                        prevIssues.map(issue =>
+                            fixedIdsSet.has(issue.id)
+                                ? { ...issue, fixed: true, fixedAt: new Date().toISOString() }
+                                : issue
+                        )
+                    );
+                    setChanges(prev => [...prev, ...fixedIssuesArray]);
+                }
+
+                setFixAllCompleted(prev => prev + fixedIssuesArray.length);
+
+                // Yield to UI between pages
+                await new Promise(r => setTimeout(r, 50));
             }
+
+            setShowChanges(true);
         } catch (error) {
             console.error('Error fixing all issues:', error);
             alert('Failed to fix all issues. Please try again.');
         } finally {
             setIsFixingAll(false);
+            setIsFixAllApplying(false);
         }
     };
 
@@ -1270,6 +1306,25 @@ const ReportDisplay = ({ data, onReset }) => {
                     </div>
                 </div>
             )}
+
+            {/* Fix All overlay */}
+            {isFixAllApplying && (
+                <div className="modal-overlay">
+                    <div className="modal-content bulk-override-modal">
+                        <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+                            <div style={{ width: 36, height: 36, border: '4px solid #cbd5e0', borderTopColor: '#667eea', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                            <div style={{ marginTop: '0.75rem', color: '#4a5568' }}>
+                                Applying {fixAllCompleted.toLocaleString()}/{fixAllTotal.toLocaleString()}...
+                            </div>
+                        </div>
+                        <div className="modal-header" style={{ position: 'relative' }}>
+                            <h3>🔄 Fixing All Issues…</h3>
+                            <p>This will run through all remaining issues in pages of 20,000.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 };
