@@ -33,6 +33,10 @@ const ReportDisplay = ({ data, onReset }) => {
         overriddenFix: '',
         isOverrideMode: false // Track whether this is an override or just a suggested fix
     });
+    // Bulk apply progress
+    const [isBulkApplying, setIsBulkApplying] = useState(false);
+    const [bulkApplyCompleted, setBulkApplyCompleted] = useState(0);
+    const [bulkApplyTotal, setBulkApplyTotal] = useState(0);
 
     // Not An Issue modal state
     const [showNotIssueModal, setShowNotIssueModal] = useState(false);
@@ -41,6 +45,7 @@ const ReportDisplay = ({ data, onReset }) => {
         similarIssues: [],
         char: null
     });
+    const [isNotIssueApplying, setIsNotIssueApplying] = useState(false);
 
     // Find similar cells with same original value and suggested fix
     const findSimilarCells = (currentIssue, fixToApply = null) => {
@@ -117,6 +122,9 @@ const ReportDisplay = ({ data, onReset }) => {
         const { currentIssue, similarIssues, overriddenFix, isOverrideMode } = bulkOverrideData;
 
         try {
+            setIsBulkApplying(true);
+            setBulkApplyCompleted(0);
+            setBulkApplyTotal((similarIssues?.length || 0) + 1);
             // Determine the fix to apply
             const fixToApply = isOverrideMode ? overriddenFix : currentIssue.suggestedFix;
 
@@ -140,6 +148,7 @@ const ReportDisplay = ({ data, onReset }) => {
             });
 
             const results = [];
+            let completedCount = 0;
             for (let i = 0; i < similarIssues.length; i += BATCH_SIZE) {
                 const batch = similarIssues.slice(i, i + BATCH_SIZE);
                 // Concurrency limiter within the batch
@@ -151,7 +160,14 @@ const ReportDisplay = ({ data, onReset }) => {
                         const p = postFix(issue.id, isOverrideMode ? overriddenFix : undefined)
                             .then(r => ({ ok: true, value: r }))
                             .catch(e => ({ ok: false, reason: e }))
-                            .finally(() => inFlight.delete(p));
+                            .finally(() => {
+                                inFlight.delete(p);
+                                completedCount += 1;
+                                // Throttle renders
+                                if (completedCount % 50 === 0 || completedCount === similarIssues.length) {
+                                    setBulkApplyCompleted(completedCount);
+                                }
+                            });
                         inFlight.add(p);
                     }
                 };
@@ -196,6 +212,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
             // Now fix the original issue
             await handleFixIssueInternal(currentIssue.id, isOverrideMode ? overriddenFix : undefined);
+            setBulkApplyCompleted(prev => Math.min(prev + 1, bulkApplyTotal));
 
             if (failures.length > 0) {
                 console.warn(`Bulk fix completed with ${failures.length} failures out of ${similarIssues.length}.`);
@@ -205,11 +222,14 @@ const ReportDisplay = ({ data, onReset }) => {
         } catch (error) {
             console.error('Error applying bulk fix:', error);
             alert('Failed to apply bulk fix. Please try again.');
+        } finally {
+            setIsBulkApplying(false);
         }
     };
     // Not An Issue confirm
     const handleNotIssueConfirm = async () => {
         try {
+            setIsNotIssueApplying(true);
             const { currentIssue, similarIssues, char } = notIssueData;
             if (char) {
                 try {
@@ -237,12 +257,14 @@ const ReportDisplay = ({ data, onReset }) => {
         } finally {
             setShowNotIssueModal(false);
             setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
+            setIsNotIssueApplying(false);
         }
     };
 
     // Not An Issue for just this one cell
     const handleNotIssueSingle = async () => {
         try {
+            setIsNotIssueApplying(true);
             const { currentIssue, char } = notIssueData;
             if (!currentIssue) return;
             if (char) {
@@ -270,6 +292,7 @@ const ReportDisplay = ({ data, onReset }) => {
         } finally {
             setShowNotIssueModal(false);
             setNotIssueData({ currentIssue: null, similarIssues: [], char: null });
+            setIsNotIssueApplying(false);
         }
     };
 
@@ -1118,12 +1141,21 @@ const ReportDisplay = ({ data, onReset }) => {
             {showBulkOverrideModal && (
                 <div className="modal-overlay">
                     <div className="modal-content bulk-override-modal">
+                        {isBulkApplying && (
+                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+                                <div style={{ width: 36, height: 36, border: '4px solid #cbd5e0', borderTopColor: '#667eea', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                <div style={{ marginTop: '0.75rem', color: '#4a5568' }}>
+                                    Applying {bulkApplyCompleted}/{bulkApplyTotal}...
+                                </div>
+                            </div>
+                        )}
                         <div className="modal-header" style={{ position: 'relative' }}>
                             <button
                                 onClick={handleBulkOverrideCancel}
                                 aria-label="Close"
                                 className="modal-close"
                                 style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                                disabled={isBulkApplying}
                             >×</button>
                             <h3>🔄 Apply to Similar Cells?</h3>
                             <p>We found {bulkOverrideData.similarIssues.length} other cell{bulkOverrideData.similarIssues.length > 1 ? 's' : ''} with the same issue.</p>
@@ -1187,12 +1219,14 @@ const ReportDisplay = ({ data, onReset }) => {
                             <button
                                 onClick={handleBulkOverrideConfirm}
                                 className="btn btn-primary"
+                                disabled={isBulkApplying}
                             >
-                                ✅ Yes, Apply to All
+                                {isBulkApplying ? 'Applying…' : '✅ Yes, Apply to All'}
                             </button>
                             <button
                                 onClick={handleBulkOverrideCancel}
                                 className="btn btn-secondary"
+                                disabled={isBulkApplying}
                             >
                                 ❌ No, Just This One
                             </button>
@@ -1205,12 +1239,19 @@ const ReportDisplay = ({ data, onReset }) => {
             {showNotIssueModal && (
                 <div className="modal-overlay">
                     <div className="modal-content bulk-override-modal">
+                        {isNotIssueApplying && (
+                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+                                <div style={{ width: 36, height: 36, border: '4px solid #cbd5e0', borderTopColor: '#48bb78', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                <div style={{ marginTop: '0.75rem', color: '#4a5568' }}>Applying your choice…</div>
+                            </div>
+                        )}
                         <div className="modal-header" style={{ position: 'relative' }}>
                             <button
                                 onClick={handleNotIssueCancel}
                                 aria-label="Close"
                                 className="modal-close"
                                 style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                                disabled={isNotIssueApplying}
                             >×</button>
                             <h3>✅ Mark as Not An Issue?</h3>
                             <p>
@@ -1260,8 +1301,8 @@ const ReportDisplay = ({ data, onReset }) => {
                         </div>
 
                         <div className="modal-actions">
-                            <button onClick={handleNotIssueConfirm} className="btn btn-primary">✅ Yes, Apply to All</button>
-                            <button onClick={handleNotIssueSingle} className="btn btn-secondary">❌ No, Just This One</button>
+                            <button onClick={handleNotIssueConfirm} className="btn btn-primary" disabled={isNotIssueApplying}>{isNotIssueApplying ? 'Applying…' : '✅ Yes, Apply to All'}</button>
+                            <button onClick={handleNotIssueSingle} className="btn btn-secondary" disabled={isNotIssueApplying}>❌ No, Just This One</button>
                         </div>
                     </div>
                 </div>
