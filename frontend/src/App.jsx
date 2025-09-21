@@ -47,30 +47,36 @@ function App() {
     setProgressPercentage(0);
     setCurrentLogLine(mockLogLines[0]);
 
-    let currentProgress = 0;
-    let logIndex = 0;
-
-    progressIntervalRef.current = setInterval(async () => {
+    let stopped = false;
+    const poll = async () => {
+      if (stopped || !sessionId) return;
       try {
-        if (!sessionId) return;
         const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/progress/${sessionId}`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           if (typeof data.percent === 'number') setProgressPercentage(data.percent);
           if (data.log) setCurrentLogLine(data.log);
           if (data.percent >= 100) {
-            clearInterval(progressIntervalRef.current);
+            stopped = true;
+            return;
           }
         }
-      } catch (e) {
-        // ignore network blips
+      } catch (_) {
+        // ignore transient errors
+      } finally {
+        if (!stopped) {
+          const nextDelay = 1500 + Math.floor(Math.random() * 700); // 1500–2200ms
+          progressIntervalRef.current = setTimeout(poll, nextDelay);
+        }
       }
-    }, 1000);
+    };
+
+    poll();
   };
 
   const stopProgressSimulation = () => {
     if (progressIntervalRef.current) {
-      clearInterval(progressIntervalRef.current);
+      clearTimeout(progressIntervalRef.current);
       progressIntervalRef.current = null;
     }
     setProgressPercentage(0);
@@ -277,3 +283,4 @@ function App() {
 }
 
 export default App;
+
