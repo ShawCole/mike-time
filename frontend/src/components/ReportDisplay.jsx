@@ -172,6 +172,7 @@ const ReportDisplay = ({ data, onReset }) => {
             const fixedIdsSet = new Set(fixedIssuesArray.map(fi => fi.id));
 
             if (fixedIssuesArray.length > 0) {
+                // Update issues state for visible rows
                 setIssues(prevIssues =>
                     prevIssues.map(issue =>
                         fixedIdsSet.has(issue.id)
@@ -179,7 +180,18 @@ const ReportDisplay = ({ data, onReset }) => {
                             : issue
                     )
                 );
-                setChanges(prevChanges => [...prevChanges, ...fixedIssuesArray]);
+                // For overrides, mutate existing change entries rather than appending duplicates
+                if (isOverrideMode && overriddenFix) {
+                    setChanges(prevChanges =>
+                        prevChanges.map(c =>
+                            fixedIdsSet.has(c.id)
+                                ? { ...c, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() }
+                                : c
+                        )
+                    );
+                } else {
+                    setChanges(prevChanges => [...prevChanges, ...fixedIssuesArray]);
+                }
             }
 
             // Progress bar completion for the bulk portion
@@ -202,6 +214,9 @@ const ReportDisplay = ({ data, onReset }) => {
                     issueId: currentIssue.id,
                     overriddenFix
                 });
+                // Reflect the current card's change locally as well
+                setChanges(prev => prev.map(c => c.id === currentIssue.id ? { ...c, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() } : c));
+                setIssues(prev => prev.map(i => i.id === currentIssue.id ? { ...i, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() } : i));
             } else {
                 await handleFixIssueInternal(currentIssue.id, undefined);
             }
