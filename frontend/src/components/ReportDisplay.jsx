@@ -43,6 +43,31 @@ const ReportDisplay = ({ data, onReset }) => {
     const [fixAllCompleted, setFixAllCompleted] = useState(0);
     const [fixAllTotal, setFixAllTotal] = useState(0);
 
+    // Simple exponential backoff with jitter for transient errors (429/503/network)
+    const requestWithRetry = async (requestFn, options = {}) => {
+        const { retries = 5, baseDelayMs = 800 } = options;
+        for (let attempt = 0; attempt <= retries; attempt += 1) {
+            try {
+                // eslint-disable-next-line no-await-in-loop
+                return await requestFn();
+            } catch (err) {
+                const status = err?.response?.status;
+                const isTransient = status === 429 || status === 503 || typeof status === 'undefined';
+                if (attempt < retries && isTransient) {
+                    const jitter = Math.floor(Math.random() * 300);
+                    const delay = baseDelayMs * Math.pow(2, attempt) + jitter;
+                    // eslint-disable-next-line no-await-in-loop
+                    await new Promise((r) => setTimeout(r, delay));
+                    continue;
+                }
+                throw err;
+            }
+        }
+        // Should never reach here
+        // eslint-disable-next-line no-throw-literal
+        throw { message: 'Exhausted retries' };
+    };
+
     // Not An Issue modal state
     const [showNotIssueModal, setShowNotIssueModal] = useState(false);
     const [notIssueData, setNotIssueData] = useState({
@@ -545,17 +570,17 @@ const ReportDisplay = ({ data, onReset }) => {
             // eslint-disable-next-line no-constant-condition
             while (true && safetyIterations-- > 0) {
                 // Always request from offset 0, only unfixed, so pagination adjusts as server state changes
-                const pageRes = await axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, 0, PAGE_LIMIT, true));
+                const pageRes = await requestWithRetry(() => axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, 0, PAGE_LIMIT, true)));
                 const pageIssues = Array.isArray(pageRes?.data?.issues) ? pageRes.data.issues : [];
                 if (pageIssues.length === 0) break;
 
                 const issueIds = pageIssues.filter(i => !i.fixed).map(i => i.id);
                 if (issueIds.length === 0) break;
 
-                const bulkRes = await axios.post(API_ENDPOINTS.fixIssuesBulk, {
+                const bulkRes = await requestWithRetry(() => axios.post(API_ENDPOINTS.fixIssuesBulk, {
                     sessionId: data.sessionId,
                     issueIds
-                });
+                }));
 
                 const fixedIssuesArray = Array.isArray(bulkRes?.data?.fixedIssues) ? bulkRes.data.fixedIssues : [];
                 const fixedIdsSet = new Set(fixedIssuesArray.map(fi => fi.id));
