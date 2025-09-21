@@ -1336,7 +1336,8 @@ app.post('/api/get-upload-url', async (req, res) => {
 
         // Create a progress session id for the client to poll
         const progressId = Date.now().toString();
-        sessionProgress.set(progressId, { percent: 0, log: 'Upload URL issued. Ready to upload to storage.', updatedAt: Date.now() });
+        // Move visible progress forward a bit so the UI doesn't sit at 0%
+        sessionProgress.set(progressId, { percent: 3, log: 'Upload URL issued. Preparing to upload to storage...', updatedAt: Date.now() });
 
         res.json({
             uploadUrl: signedUrl,
@@ -2436,7 +2437,8 @@ app.get('/api/progress/:sessionId', (req, res) => {
 // Progress API: start a new progress session
 app.post('/api/progress/start', (req, res) => {
     const progressId = Date.now().toString();
-    sessionProgress.set(progressId, { percent: 0, log: 'Starting...', updatedAt: Date.now() });
+    // Start a bit above 0 for better perceived responsiveness
+    sessionProgress.set(progressId, { percent: 1, log: 'Starting...', updatedAt: Date.now() });
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
