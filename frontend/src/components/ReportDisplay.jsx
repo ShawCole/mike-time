@@ -166,7 +166,7 @@ const ReportDisplay = ({ data, onReset }) => {
                 payload.overriddenFix = overriddenFix;
             }
 
-            const resp = await axios.post(API_ENDPOINTS.fixIssuesBulk, payload);
+            const resp = await axios.post(isOverrideMode ? API_ENDPOINTS.overrideIssuesBulk : API_ENDPOINTS.fixIssuesBulk, payload);
 
             const fixedIssuesArray = Array.isArray(resp?.data?.fixedIssues) ? resp.data.fixedIssues : [];
             const fixedIdsSet = new Set(fixedIssuesArray.map(fi => fi.id));
@@ -196,7 +196,15 @@ const ReportDisplay = ({ data, onReset }) => {
             });
 
             // Fix the original issue as a single call (keeps existing behavior)
-            await handleFixIssueInternal(currentIssue.id, isOverrideMode ? overriddenFix : undefined);
+            if (isOverrideMode) {
+                await axios.post(API_ENDPOINTS.overrideIssue, {
+                    sessionId: data.sessionId,
+                    issueId: currentIssue.id,
+                    overriddenFix
+                });
+            } else {
+                await handleFixIssueInternal(currentIssue.id, undefined);
+            }
             setBulkApplyCompleted(prev => Math.min(prev + 1, bulkApplyTotal));
 
             const totalRequested = issueIds.length;
@@ -493,7 +501,7 @@ const ReportDisplay = ({ data, onReset }) => {
 
             // Store the override pattern for learning
             // Use the original issue ID, not the changeId
-            const response = await axios.post(API_ENDPOINTS.fixIssue, {
+            const response = await axios.post(API_ENDPOINTS.overrideIssue, {
                 sessionId: data.sessionId,
                 issueId: change.id, // This should be the original issue.id from the spread
                 overriddenFix: overriddenFix
