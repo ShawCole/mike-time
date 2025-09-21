@@ -1667,6 +1667,11 @@ app.post('/api/fix-issue', async (req, res) => {
         }
 
         if (issue.fixed) {
+            console.log('[fix-issue] override on fixed?', {
+                sessionId,
+                issueId,
+                hasOverride: typeof overriddenFix === 'string' && overriddenFix.length > 0
+            });
             // Allow overriding an already fixed issue when an override is explicitly provided
             if (!overriddenFix) {
                 return res.status(400).json({ error: 'Issue already fixed' });
