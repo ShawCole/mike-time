@@ -1847,6 +1847,98 @@ app.post('/api/fix-issues-bulk', async (req, res) => {
     }
 });
 
+// Override a single, already-fixed issue
+app.post('/api/override-issue', async (req, res) => {
+    try {
+        const { sessionId, issueId, overriddenFix } = req.body || {};
+        if (!sessionId || !issueId || typeof overriddenFix !== 'string') {
+            return res.status(400).json({ error: 'sessionId, issueId and overriddenFix are required' });
+        }
+        const session = sessionData.get(sessionId);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+        const issue = session.issues.find(i => i.id === issueId);
+        if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+        const previousSuggested = issue.suggestedFix;
+        if (overriddenFix !== previousSuggested) {
+            try {
+                const context = extractLearningContext(issue);
+                await learningAnalytics.storeOverridePattern(
+                    issue.originalValue,
+                    previousSuggested,
+                    overriddenFix,
+                    context
+                );
+            } catch (e) {
+                console.error('Error storing learning pattern (override-issue):', e);
+            }
+        }
+
+        issue.fixed = true;
+        issue.suggestedFix = overriddenFix;
+        const updated = {
+            ...issue,
+            suggestedFix: overriddenFix,
+            fixedAt: new Date().toISOString(),
+            changeId: (session.fixedIssues.find(fi => fi.id === issueId)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            wasOverridden: true
+        };
+        const idx = session.fixedIssues.findIndex(fi => fi.id === issueId);
+        if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
+        return res.json({ success: true, fixedIssue: updated, message: 'Issue overridden successfully' });
+    } catch (error) {
+        console.error('Error overriding issue:', error);
+        return res.status(500).json({ error: 'Failed to override issue' });
+    }
+});
+
+// Override multiple issues (bulk), ids must exist; intended for duplicates
+app.post('/api/override-issues-bulk', async (req, res) => {
+    try {
+        const { sessionId, issueIds, overriddenFix } = req.body || {};
+        if (!sessionId || !Array.isArray(issueIds) || issueIds.length === 0 || typeof overriddenFix !== 'string') {
+            return res.status(400).json({ error: 'sessionId, issueIds[] and overriddenFix are required' });
+        }
+        const session = sessionData.get(sessionId);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+
+        const fixedIssues = [];
+        const notFoundIds = [];
+        for (const id of issueIds) {
+            const issue = session.issues.find(i => i.id === id);
+            if (!issue) { notFoundIds.push(id); continue; }
+            if (overriddenFix !== issue.suggestedFix) {
+                try {
+                    const context = extractLearningContext(issue);
+                    await learningAnalytics.storeOverridePattern(
+                        issue.originalValue,
+                        issue.suggestedFix,
+                        overriddenFix,
+                        context
+                    );
+                } catch (e) { console.error('Error storing pattern (override-bulk):', e); }
+            }
+            issue.fixed = true;
+            issue.suggestedFix = overriddenFix;
+            const updated = {
+                ...issue,
+                suggestedFix: overriddenFix,
+                fixedAt: new Date().toISOString(),
+                changeId: (session.fixedIssues.find(fi => fi.id === id)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                wasOverridden: true
+            };
+            const idx = session.fixedIssues.findIndex(fi => fi.id === id);
+            if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
+            fixedIssues.push(updated);
+        }
+        console.log(`[override-bulk] session=${sessionId} requested=${issueIds.length} fixed=${fixedIssues.length} notFound=${notFoundIds.length}`);
+        return res.json({ success: true, fixedCount: fixedIssues.length, fixedIssues, notFoundIds });
+    } catch (error) {
+        console.error('Error overriding issues in bulk:', error);
+        return res.status(500).json({ error: 'Failed to override issues in bulk' });
+    }
+});
+
 // Mark a character/value as "not an issue" (whitelist)
 app.post('/api/not-an-issue', async (req, res) => {
     try {
