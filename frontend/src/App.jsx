@@ -50,6 +50,11 @@ function App() {
     let stopped = false;
     const activeId = sessionId;
     let lastPercent = 0;
+    // cancel any prior poller immediately
+    if (progressIntervalRef.current) {
+      clearTimeout(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
     const poll = async () => {
       if (stopped || !sessionId) return;
       try {

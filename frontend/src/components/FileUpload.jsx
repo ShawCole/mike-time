@@ -20,17 +20,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
     const uploadFile = async (file) => {
         try {
-            // Request a progress id up-front so the app can poll immediately
-            try {
-                const p = await axios.post(API_ENDPOINTS.progressStart);
-                if (p.data?.progressId) {
-                    onLoadingChange(true, p.data.progressId);
-                } else {
-                    onLoadingChange(true);
-                }
-            } catch (_) {
-                onLoadingChange(true);
-            }
+            // Defer progress start to the specific upload path to avoid multiple progress sessions
             setUploadProgress(0);
             setProcessingProgress(0);
 
@@ -68,13 +58,17 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
         try {
             // Step 1: Get signed URL for direct Cloud Storage upload
+            // Start a single progress session for this upload path
+            const p = await axios.post(API_ENDPOINTS.progressStart);
+            const activeProgressId = p.data?.progressId;
+            onLoadingChange(true, activeProgressId);
+
             const signedUrlResponse = await axios.post(API_ENDPOINTS.getUploadUrl, {
                 filename: file.name,
                 contentType: file.type || 'text/csv'
             });
 
-            const { uploadUrl, filename, progressId } = signedUrlResponse.data;
-            onLoadingChange(true, progressId);
+            const { uploadUrl, filename } = signedUrlResponse.data;
 
             // Step 2: Upload directly to Cloud Storage
             setCurrentStage('uploading');
@@ -99,7 +93,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
-                progressId: progressId,
+                progressId: activeProgressId,
                 allowDiacritics: !!allowDiacritics,
                 ignoreWhitelist: !allowDiacritics ? true : false
             }, { timeout: 3600000 });
@@ -113,7 +107,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                     ? response.data.issueCount
                     : (Array.isArray(response.data?.issues) ? response.data.issues.length : 0),
                 // ensure progressId is available for App to poll
-                progressId: response.data?.progressId || progressId
+                progressId: response.data?.progressId || activeProgressId
             };
 
             // Small delay to show completion
@@ -149,7 +143,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 formData.append('progressId', p.data.progressId);
                 onLoadingChange(true, p.data.progressId);
             }
-        } catch (_) { }
+        } catch (_) { /* ignore */ }
 
         const response = await axios.post(API_ENDPOINTS.upload, formData, {
             headers: {
