@@ -1667,7 +1667,45 @@ app.post('/api/fix-issue', async (req, res) => {
         }
 
         if (issue.fixed) {
-            return res.status(400).json({ error: 'Issue already fixed' });
+            // Allow overriding an already fixed issue when an override is explicitly provided
+            if (!overriddenFix) {
+                return res.status(400).json({ error: 'Issue already fixed' });
+            }
+
+            const previousSuggested = issue.suggestedFix;
+            // Store learning if override differs from previous suggestion
+            if (overriddenFix !== previousSuggested) {
+                try {
+                    const context = extractLearningContext(issue);
+                    await learningAnalytics.storeOverridePattern(
+                        issue.originalValue,
+                        previousSuggested,
+                        overriddenFix,
+                        context
+                    );
+                } catch (learningError) {
+                    console.error('Error storing learning pattern (override on fixed):', learningError);
+                }
+            }
+
+            // Update in-memory issue and fixed change
+            issue.suggestedFix = overriddenFix;
+            const updatedChange = {
+                ...issue,
+                suggestedFix: overriddenFix,
+                fixedAt: new Date().toISOString(),
+                // Reuse existing changeId if present
+                changeId: (session.fixedIssues.find(fi => fi.id === issueId)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                wasOverridden: true
+            };
+            const idx = session.fixedIssues.findIndex(fi => fi.id === issueId);
+            if (idx >= 0) {
+                session.fixedIssues[idx] = updatedChange;
+            } else {
+                session.fixedIssues.push(updatedChange);
+            }
+
+            return res.json({ success: true, fixedIssue: updatedChange, message: 'Issue overridden successfully' });
         }
 
         // Store override in learning system if user provided a different fix
