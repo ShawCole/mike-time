@@ -48,13 +48,22 @@ function App() {
     setCurrentLogLine(mockLogLines[0]);
 
     let stopped = false;
+    const activeId = sessionId;
+    let lastPercent = 0;
     const poll = async () => {
       if (stopped || !sessionId) return;
       try {
         const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/progress/${sessionId}`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
-          if (typeof data.percent === 'number') setProgressPercentage(data.percent);
+          if (data.sessionId && data.sessionId !== activeId) {
+            // Ignore stale responses for a previous/other session
+            return;
+          }
+          if (typeof data.percent === 'number') {
+            lastPercent = Math.max(lastPercent, data.percent);
+            setProgressPercentage(lastPercent);
+          }
           if (data.log) setCurrentLogLine(data.log);
           if (data.percent >= 100) {
             stopped = true;
