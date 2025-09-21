@@ -2548,7 +2548,9 @@ const sessionProgress = new Map();
 const updateProgress = (sessionId, percent, log) => {
     if (!sessionId) return;
     const clamped = Math.max(0, Math.min(100, Math.floor(percent)));
-    sessionProgress.set(sessionId, { percent: clamped, log: log || '', updatedAt: Date.now() });
+    const prev = sessionProgress.get(sessionId);
+    const monotonic = Math.max(prev?.percent || 0, clamped);
+    sessionProgress.set(sessionId, { percent: monotonic, log: log || (prev?.log || ''), updatedAt: Date.now() });
 };
 
 // Periodic cleanup for stale progress entries (older than 24h)
