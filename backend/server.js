@@ -1529,37 +1529,18 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
                 totalColumns = 0;
             }
         } else if (fileExtension === '.xlsx' || fileExtension === '.xls') {
-            // Stream for large Excel files to avoid memory blowups
-            if (req.file.size > 20 * 1024 * 1024) {
-                console.log('Using streaming Excel analysis for large file');
-                const sessionIdTemp = Date.now().toString();
-                updateProgress(sessionIdTemp, 5, 'Reading Excel workbook...');
-                const streamResult = await analyzeExcelStream(
-                    filePath,
-                    req.file.originalname,
-                    (pct) => updateProgress(sessionIdTemp, pct, `Analyzing Excel rows... ${pct}%`)
-                );
-                req._progressSessionId = sessionIdTemp;
-                totalRows = streamResult.totalRows;
-                totalColumns = streamResult.headers.length;
-                analysisResult = { issues: streamResult.issues, totalRows };
-            } else {
-                // Existing in-memory path
-                const data = await parseExcelFile(filePath);
-                if (!data || !Array.isArray(data) || data.length === 0) {
-                    throw new Error('Excel file is empty or could not be parsed');
-                }
-                totalRows = data.length;
-                totalColumns = Object.keys(data[0] || {}).length;
-                console.log('Starting Excel data analysis...');
-                const analysisStartTime = Date.now();
-                const issues = analyzeData(data, req.file.originalname);
-                const analysisTime = Date.now() - analysisStartTime;
-                analysisResult = { issues, totalRows };
-                data.length = 0;
-                forceGC();
-                console.log(`Excel analysis complete in ${analysisTime}ms`);
-            }
+            // Always use streaming Excel analysis (even for small files) to provide live progress
+            const sessionIdTemp = progressId; // reuse provided progress id
+            updateProgress(sessionIdTemp, 5, 'Reading Excel workbook...');
+            const streamResult = await analyzeExcelStream(
+                filePath,
+                req.file.originalname,
+                (pct) => updateProgress(sessionIdTemp, pct, `Analyzing Excel rows... ${pct}%`)
+            );
+            req._progressSessionId = sessionIdTemp;
+            totalRows = streamResult.totalRows;
+            totalColumns = streamResult.headers.length;
+            analysisResult = { issues: streamResult.issues, totalRows };
         } else {
             throw new Error('Unsupported file type');
         }
@@ -1569,6 +1550,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         console.log(`Memory after processing: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
 
         // Enhance suggestions with learned patterns
+        updateProgress(req._progressSessionId || progressId, 99, 'Enhancing suggestions with learned patterns...');
         console.log('Enhancing suggestions with learned patterns...');
         const enhancementStartTime = Date.now();
         const enhancedIssues = await enhanceSuggestionsWithLearning(analysisResult.issues);
