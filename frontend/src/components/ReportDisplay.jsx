@@ -188,8 +188,16 @@ const ReportDisplay = ({ data, onReset }) => {
                 const cellRefs = Array.isArray(resp?.data?.cellRefs) ? resp.data.cellRefs : [];
                 setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds, cellRefs }));
             } catch (e) {
-                console.warn('Failed to load cell refs for group:', e);
-                setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds: [], cellRefs: [] }));
+                console.warn('Failed to load cell refs for group (fallback to client filter):', e);
+                // Fallback: derive cell refs from currently loaded issues
+                const group = groups.find(g => g.signature === signature);
+                const refs = issues
+                    .filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value)
+                    .map(i => i.cellReference || `${i.column}${i.row}`);
+                const ids = issues
+                    .filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value)
+                    .map(i => i.id);
+                setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds: ids, cellRefs: refs }));
             }
         }
     };
@@ -1084,6 +1092,34 @@ const ReportDisplay = ({ data, onReset }) => {
                                                                 <button className="btn btn-secondary btn-sm" onClick={() => copyRefsToClipboard(item.signature)}>Copy</button>
                                                             </div>
                                                         </div>
+
+                                                        {/* Retain original card content for sample issue */}
+                                                        <div className="value-section">
+                                                            <label>Current Value:</label>
+                                                            <div className="value-display current-value">{item.sampleIssue?.originalValue}</div>
+                                                        </div>
+                                                        <div className="suggested-fix-section">
+                                                            <label>Suggested Fix:</label>
+                                                            <div className="value-display suggested-value">{item.sampleIssue?.suggestedFix}</div>
+                                                        </div>
+                                                        {item.sampleIssue?.hasInvalidChars && item.sampleIssue?.invalidCharacters && item.sampleIssue.invalidCharacters.length > 0 && (
+                                                            <div className="character-details">
+                                                                <label>Invalid Characters Found:</label>
+                                                                <div className="character-list">
+                                                                    {item.sampleIssue.invalidCharacters.slice(0, 5).map((char, charIndex) => (
+                                                                        <span key={charIndex} className="character-badge">
+                                                                            "{char.char}" (U+{char.charCode.toString(16).toUpperCase().padStart(4, '0')}) - {char.description}
+                                                                            {char.replacement && ` → "${char.replacement}"`}
+                                                                        </span>
+                                                                    ))}
+                                                                    {item.sampleIssue.invalidCharacters.length > 5 && (
+                                                                        <span className="character-badge" style={{ background: '#e2e8f0', color: '#4a5568' }}>
+                                                                            +{item.sampleIssue.invalidCharacters.length - 5} more characters
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
 
