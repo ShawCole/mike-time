@@ -256,17 +256,17 @@ const ReportDisplay = ({ data, onReset }) => {
             }
 
             const issueIds = similarIssues.map(sim => sim.id);
-            const resp = await axios.post(API_ENDPOINTS.fixIssuesBulk, {
+            const resp = await axios.post(API_ENDPOINTS.notAnIssueBulk, {
                 sessionId: data.sessionId,
-                issueIds,
-                overriddenFix: currentIssue.originalValue
+                issueIds
             });
 
             const fixedIssuesArray = Array.isArray(resp?.data?.fixedIssues) ? resp.data.fixedIssues : [];
             const fixedIds = new Set(fixedIssuesArray.map(fi => fi.id));
 
             setIssues(prev => prev.map(i => fixedIds.has(i.id) ? { ...i, fixed: true, suggestedFix: currentIssue.originalValue, fixedAt: new Date().toISOString() } : i));
-            setChanges(prev => [...prev, ...fixedIssuesArray]);
+            // Update existing change entries rather than duplicating
+            setChanges(prev => prev.map(c => fixedIds.has(c.id) ? { ...c, suggestedFix: currentIssue.originalValue, fixedAt: new Date().toISOString() } : c));
         } catch (e) {
             console.error('Not An Issue confirm failed:', e);
             alert('Failed to apply Not An Issue.');

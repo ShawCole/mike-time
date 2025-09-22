@@ -25,7 +25,8 @@ export const API_ENDPOINTS = {
     learningExport: `${API_BASE_URL}/api/learning/export`,
     learningTrain: `${API_BASE_URL}/api/learning/train`,
     // Whitelisting (Not An Issue)
-    notAnIssue: `${API_BASE_URL}/api/not-an-issue`
+    notAnIssue: `${API_BASE_URL}/api/not-an-issue`,
+    notAnIssueBulk: `${API_BASE_URL}/api/not-an-issue-bulk`
 };
 
 export default API_BASE_URL; 

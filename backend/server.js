@@ -1965,6 +1965,64 @@ app.post('/api/not-an-issue', async (req, res) => {
     }
 });
 
+// Not An Issue bulk: whitelist and set multiple issues to original value
+app.post('/api/not-an-issue-bulk', async (req, res) => {
+    try {
+        const { sessionId, issueIds } = req.body || {};
+        if (!sessionId || !Array.isArray(issueIds) || issueIds.length === 0) {
+            return res.status(400).json({ error: 'sessionId and issueIds[] are required' });
+        }
+
+        const session = sessionData.get(sessionId);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+
+        const fixedIssues = [];
+        const notFoundIds = [];
+        for (const id of issueIds) {
+            const issue = session.issues.find(i => i.id === id);
+            if (!issue) { notFoundIds.push(id); continue; }
+
+            // Whitelist any invalid characters present in the original value
+            try {
+                if (issue.invalidCharacters && Array.isArray(issue.invalidCharacters)) {
+                    for (const ch of issue.invalidCharacters) {
+                        const c = ch.char;
+                        await new Promise((resolve, reject) => {
+                            db.run(
+                                `INSERT OR IGNORE INTO whitelisted_characters (char, description) VALUES (?, ?)`,
+                                [c, 'User approved via bulk Not An Issue'],
+                                (err) => (err ? reject(err) : resolve())
+                            );
+                        });
+                        whitelistedCharacters.add(c);
+                    }
+                }
+            } catch (e) {
+                console.error('Error whitelisting in not-an-issue-bulk:', e);
+            }
+
+            // Mark fixed with original value
+            issue.fixed = true;
+            const updated = {
+                ...issue,
+                suggestedFix: issue.originalValue,
+                fixedAt: new Date().toISOString(),
+                changeId: (session.fixedIssues.find(fi => fi.id === id)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                wasOverridden: true
+            };
+            const idx = session.fixedIssues.findIndex(fi => fi.id === id);
+            if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
+            fixedIssues.push(updated);
+        }
+
+        console.log(`[not-an-issue-bulk] session=${sessionId} requested=${issueIds.length} fixed=${fixedIssues.length} notFound=${notFoundIds.length}`);
+        return res.json({ success: true, fixedCount: fixedIssues.length, fixedIssues, notFoundIds });
+    } catch (error) {
+        console.error('Error in not-an-issue-bulk:', error);
+        return res.status(500).json({ error: 'Failed to apply Not An Issue in bulk' });
+    }
+});
+
 // Check which issues are new/unseen by the learning system
 app.post('/api/check-new-issues', async (req, res) => {
     try {
