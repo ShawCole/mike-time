@@ -1874,47 +1874,47 @@ app.post('/api/fix-issues-bulk', async (req, res) => {
         for (let i = 0; i < targets.length; i += CHUNK_SIZE) {
             const chunk = targets.slice(i, i + CHUNK_SIZE);
             for (const t of chunk) {
-            const targetId = t && (t.issueId || t.id);
-            if (typeof targetId === 'undefined' || targetId === null) continue;
+                const targetId = t && (t.issueId || t.id);
+                if (typeof targetId === 'undefined' || targetId === null) continue;
 
-            const issue = session.issues.find(i => i.id === targetId);
-            if (!issue) {
-                notFoundIds.push(targetId);
-                continue;
-            }
-            if (issue.fixed) {
-                alreadyFixedIds.push(targetId);
-                continue;
-            }
-
-            const appliedOverride = typeof t.overriddenFix === 'string' ? t.overriddenFix : overriddenFix;
-
-            // Store learning override if provided and differs from current suggestion
-            if (appliedOverride && appliedOverride !== issue.suggestedFix) {
-                try {
-                    const context = extractLearningContext(issue);
-                    await learningAnalytics.storeOverridePattern(
-                        issue.originalValue,
-                        issue.suggestedFix,
-                        appliedOverride,
-                        context
-                    );
-                } catch (learningError) {
-                    console.error('Error storing learning pattern (bulk):', learningError);
+                const issue = session.issues.find(i => i.id === targetId);
+                if (!issue) {
+                    notFoundIds.push(targetId);
+                    continue;
                 }
-            }
+                if (issue.fixed) {
+                    alreadyFixedIds.push(targetId);
+                    continue;
+                }
 
-            // Mark fixed and record
-            issue.fixed = true;
-            const fixedIssue = {
-                ...issue,
-                suggestedFix: appliedOverride || issue.suggestedFix,
-                fixedAt: new Date().toISOString(),
-                changeId: `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-                wasOverridden: !!appliedOverride
-            };
-            session.fixedIssues.push(fixedIssue);
-            fixedIssues.push(fixedIssue);
+                const appliedOverride = typeof t.overriddenFix === 'string' ? t.overriddenFix : overriddenFix;
+
+                // Store learning override if provided and differs from current suggestion
+                if (appliedOverride && appliedOverride !== issue.suggestedFix) {
+                    try {
+                        const context = extractLearningContext(issue);
+                        await learningAnalytics.storeOverridePattern(
+                            issue.originalValue,
+                            issue.suggestedFix,
+                            appliedOverride,
+                            context
+                        );
+                    } catch (learningError) {
+                        console.error('Error storing learning pattern (bulk):', learningError);
+                    }
+                }
+
+                // Mark fixed and record
+                issue.fixed = true;
+                const fixedIssue = {
+                    ...issue,
+                    suggestedFix: appliedOverride || issue.suggestedFix,
+                    fixedAt: new Date().toISOString(),
+                    changeId: `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                    wasOverridden: !!appliedOverride
+                };
+                session.fixedIssues.push(fixedIssue);
+                fixedIssues.push(fixedIssue);
             }
         }
 
@@ -2098,40 +2098,40 @@ app.post('/api/not-an-issue-bulk', async (req, res) => {
         for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
             const chunk = ids.slice(i, i + CHUNK_SIZE);
             for (const id of chunk) {
-            const issue = session.issues.find(i => i.id === id);
-            if (!issue) { notFoundIds.push(id); continue; }
+                const issue = session.issues.find(i => i.id === id);
+                if (!issue) { notFoundIds.push(id); continue; }
 
-            // Whitelist any invalid characters present in the original value
-            try {
-                if (issue.invalidCharacters && Array.isArray(issue.invalidCharacters)) {
-                    for (const ch of issue.invalidCharacters) {
-                        const c = ch.char;
-                        await new Promise((resolve, reject) => {
-                            db.run(
-                                `INSERT OR IGNORE INTO whitelisted_characters (char, description) VALUES (?, ?)`,
-                                [c, 'User approved via bulk Not An Issue'],
-                                (err) => (err ? reject(err) : resolve())
-                            );
-                        });
-                        whitelistedCharacters.add(c);
+                // Whitelist any invalid characters present in the original value
+                try {
+                    if (issue.invalidCharacters && Array.isArray(issue.invalidCharacters)) {
+                        for (const ch of issue.invalidCharacters) {
+                            const c = ch.char;
+                            await new Promise((resolve, reject) => {
+                                db.run(
+                                    `INSERT OR IGNORE INTO whitelisted_characters (char, description) VALUES (?, ?)`,
+                                    [c, 'User approved via bulk Not An Issue'],
+                                    (err) => (err ? reject(err) : resolve())
+                                );
+                            });
+                            whitelistedCharacters.add(c);
+                        }
                     }
+                } catch (e) {
+                    console.error('Error whitelisting in not-an-issue-bulk:', e);
                 }
-            } catch (e) {
-                console.error('Error whitelisting in not-an-issue-bulk:', e);
-            }
 
-            // Mark fixed with original value
-            issue.fixed = true;
-            const updated = {
-                ...issue,
-                suggestedFix: issue.originalValue,
-                fixedAt: new Date().toISOString(),
-                changeId: (session.fixedIssues.find(fi => fi.id === id)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-                wasOverridden: true
-            };
-            const idx = session.fixedIssues.findIndex(fi => fi.id === id);
-            if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
-            fixedIssues.push(updated);
+                // Mark fixed with original value
+                issue.fixed = true;
+                const updated = {
+                    ...issue,
+                    suggestedFix: issue.originalValue,
+                    fixedAt: new Date().toISOString(),
+                    changeId: (session.fixedIssues.find(fi => fi.id === id)?.changeId) || `fix-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                    wasOverridden: true
+                };
+                const idx = session.fixedIssues.findIndex(fi => fi.id === id);
+                if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
+                fixedIssues.push(updated);
             }
         }
 
