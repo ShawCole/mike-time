@@ -17,6 +17,11 @@ export const API_ENDPOINTS = {
     downloadFixed: (sessionId) => `${API_BASE_URL}/api/download-fixed/${sessionId}`,
     getIssuesPage: (sessionId, offset = 0, limit = 20000, onlyUnfixed = true) =>
         `${API_BASE_URL}/api/issues/${sessionId}?offset=${offset}&limit=${limit}&onlyUnfixed=${onlyUnfixed ? 'true' : 'false'}`,
+    // Grouped issues and cell refs
+    getIssuesGrouped: (sessionId, offset = 0, limit, onlyUnfixed = true) =>
+        `${API_BASE_URL}/api/issues-grouped/${sessionId}?offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}&onlyUnfixed=${onlyUnfixed ? 'true' : 'false'}`,
+    getIssueCellRefs: (sessionId, signature, offset = 0, limit) =>
+        `${API_BASE_URL}/api/issues/cell-refs?sessionId=${encodeURIComponent(sessionId)}&signature=${encodeURIComponent(signature)}&offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}`,
     health: `${API_BASE_URL}/api/health`,
     // Learning endpoints
     learningStats: `${API_BASE_URL}/api/learning/stats`,
