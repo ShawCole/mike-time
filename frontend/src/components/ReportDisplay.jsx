@@ -6,6 +6,7 @@ const ReportDisplay = ({ data, onReset }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize] = useState(25);
+    // Legacy per-issue list (kept for downloads and compatibility)
     const [issues, setIssues] = useState(data.issues || []);
     const [issuesOffset, setIssuesOffset] = useState(Array.isArray(data.issues) ? data.issues.length : 0);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -77,6 +78,14 @@ const ReportDisplay = ({ data, onReset }) => {
     });
     const [isNotIssueApplying, setIsNotIssueApplying] = useState(false);
 
+    // Grouped mode state (default on)
+    const [groups, setGroups] = useState([]);
+    const [groupsOffset, setGroupsOffset] = useState(0);
+    const [totalGroups, setTotalGroups] = useState(0);
+    const [totalGroupIssues, setTotalGroupIssues] = useState(0);
+    const [expandedSignatures, setExpandedSignatures] = useState(new Set());
+    const [groupRefsCache, setGroupRefsCache] = useState(new Map()); // signature -> { loaded, issueIds, cellRefs }
+
     // Find similar cells with same original value and suggested fix
     const findSimilarCells = (currentIssue, fixToApply = null) => {
         const normalize = (s) => (s ?? '').trim();
@@ -115,8 +124,24 @@ const ReportDisplay = ({ data, onReset }) => {
         }
     };
 
-    // Check for new issues when component loads
+    // Load grouped issues and check for new issues when component loads
     useEffect(() => {
+        const loadGroups = async () => {
+            try {
+                if (!data.sessionId) return;
+                const resp = await axios.get(API_ENDPOINTS.getIssuesGrouped(data.sessionId, 0, undefined, true));
+                const arr = Array.isArray(resp?.data?.groups) ? resp.data.groups : [];
+                setGroups(arr);
+                setGroupsOffset(arr.length);
+                if (typeof resp?.data?.totalGroups === 'number') setTotalGroups(resp.data.totalGroups);
+                if (typeof resp?.data?.totalIssues === 'number') setTotalGroupIssues(resp.data.totalIssues);
+            } catch (e) {
+                console.warn('Failed to load grouped issues:', e);
+                setGroups([]);
+                setGroupsOffset(0);
+            }
+        };
+        loadGroups();
         checkNewIssues();
     }, [data.sessionId]);
 
@@ -144,6 +169,71 @@ const ReportDisplay = ({ data, onReset }) => {
             console.warn('Failed to load more issues page:', e);
         } finally {
             setIsLoadingMore(false);
+        }
+    };
+
+    // Group helpers
+    const isGroupExpanded = (signature) => expandedSignatures.has(signature);
+    const toggleGroupExpand = async (signature) => {
+        setExpandedSignatures(prev => {
+            const next = new Set(prev);
+            if (next.has(signature)) next.delete(signature); else next.add(signature);
+            return next;
+        });
+        // Lazy load refs if not loaded
+        if (!groupRefsCache.get(signature)) {
+            try {
+                const resp = await axios.get(API_ENDPOINTS.getIssueCellRefs(data.sessionId, signature));
+                const issueIds = Array.isArray(resp?.data?.issueIds) ? resp.data.issueIds : [];
+                const cellRefs = Array.isArray(resp?.data?.cellRefs) ? resp.data.cellRefs : [];
+                setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds, cellRefs }));
+            } catch (e) {
+                console.warn('Failed to load cell refs for group:', e);
+                setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds: [], cellRefs: [] }));
+            }
+        }
+    };
+
+    const copyRefsToClipboard = (signature) => {
+        const entry = groupRefsCache.get(signature);
+        const text = entry && Array.isArray(entry.cellRefs) ? entry.cellRefs.join(',') : '';
+        if (!text) return;
+        navigator.clipboard.writeText(text).catch(() => {});
+    };
+
+    const removeGroupFromUI = (signature) => {
+        setGroups(prev => prev.filter(g => g.signature !== signature));
+    };
+
+    const idempotencyKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    const applyFixToGroup = async (group, overriddenFix) => {
+        const payload = { sessionId: data.sessionId, groupSignature: group.signature, idempotencyKey: idempotencyKey() };
+        if (typeof overriddenFix === 'string' && overriddenFix.length > 0) payload.overriddenFix = overriddenFix;
+        const resp = await requestWithRetry(() => axios.post(API_ENDPOINTS.fixIssuesBulk, payload));
+        return resp?.data;
+    };
+
+    const applyNotAnIssueToGroup = async (group) => {
+        const payload = { sessionId: data.sessionId, groupSignature: group.signature, idempotencyKey: idempotencyKey() };
+        const resp = await requestWithRetry(() => axios.post(API_ENDPOINTS.notAnIssueBulk, payload));
+        return resp?.data;
+    };
+
+    const promptApplyToSiblingGroups = async (baseGroup, action) => {
+        // Find other groups with same column + errorType
+        let remaining = groups.filter(g => g.column === baseGroup.column && g.errorType === baseGroup.errorType && g.signature !== baseGroup.signature);
+        for (const nextGroup of remaining) {
+            // Minimal prompt for now
+            const proceed = window.confirm('We\'ve found this error in another group. Apply the same action to this group as well?');
+            if (!proceed) continue;
+            try {
+                if (action === 'fix') await applyFixToGroup(nextGroup);
+                else if (action === 'notAnIssue') await applyNotAnIssueToGroup(nextGroup);
+                removeGroupFromUI(nextGroup.signature);
+            } catch (e) {
+                console.warn('Follow-up group apply failed:', e);
+            }
         }
     };
 
@@ -415,35 +505,26 @@ const ReportDisplay = ({ data, onReset }) => {
                 (change.cellReference && change.cellReference.toLowerCase().includes(searchTerm.toLowerCase()))
             );
         } else {
-            // Show only unfixed issues when in "Show Issues" view
-            let allIssues = issues.filter(issue => !issue.fixed);
-
-            // Apply search filter if needed
+            // Grouped view: operate on groups, default on
+            let allGroups = groups;
             if (searchTerm) {
-                allIssues = allIssues.filter(issue =>
-                    issue.column.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    issue.originalValue.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    issue.problem.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    issue.row.toString().includes(searchTerm) ||
-                    (issue.cellReference && issue.cellReference.toLowerCase().includes(searchTerm.toLowerCase()))
+                const q = searchTerm.toLowerCase();
+                allGroups = allGroups.filter(g =>
+                    String(g.column || '').toLowerCase().includes(q) ||
+                    String(g.value || '').toLowerCase().includes(q) ||
+                    String(g.sampleIssue?.problem || '').toLowerCase().includes(q)
                 );
             }
-
-            // Sort issues: new issues first, then by row/column
-            return allIssues.sort((a, b) => {
-                const aIsNew = newIssueIds.has(a.id);
-                const bIsNew = newIssueIds.has(b.id);
-
-                // If one is new and the other isn't, new comes first
-                if (aIsNew && !bIsNew) return -1;
-                if (!aIsNew && bIsNew) return 1;
-
-                // If both are new or both are not new, sort by row then column
-                if (a.row !== b.row) return a.row - b.row;
-                return a.column.localeCompare(b.column);
+            // Sort: column asc, count desc, value asc
+            return [...allGroups].sort((a, b) => {
+                if (a.column === b.column) {
+                    if (b.count === a.count) return String(a.value).localeCompare(String(b.value));
+                    return b.count - a.count;
+                }
+                return String(a.column).localeCompare(String(b.column));
             });
         }
-    }, [issues, changes, searchTerm, showChanges, newIssueIds, newIssuesOverridden]);
+    }, [groups, changes, searchTerm, showChanges, newIssueIds, newIssuesOverridden]);
 
     const handleSuggestedFixEdit = (issueId, newFix) => {
         setOverriddenFixes(prev => ({
@@ -886,7 +967,7 @@ const ReportDisplay = ({ data, onReset }) => {
                                     {searchTerm && ` (filtered)`}
                                 </div>
 
-                                {/* Issues/Changes Display */}
+                                {/* Issues/Changes Display - grouped by default when not showing changes */}
                                 <div className="issues-container">
                                     {paginatedData.map((item, index) => (
                                         showChanges ? (
@@ -967,179 +1048,78 @@ const ReportDisplay = ({ data, onReset }) => {
                                                 )}
                                             </div>
                                         ) : (
-                                            // Issues Display
-                                            <div key={`issue-${item.id}-${index}`} className={`issue-card ${item.fixed ? 'change-card' : ''}`}>
+                                            // Grouped issues card
+                                            <div key={`group-${item.signature}-${index}`} className="issue-card">
                                                 <div className="issue-header">
-                                                    <span className="issue-location">
-                                                        Cell {item.cellReference || `${item.column}${item.row}`} • Column: {item.column}
-                                                    </span>
-                                                    <span className={`problem-badge ${item.fixed ? 'fixed-badge' : ''}`}>
-                                                        {item.fixed ? '✅ Fixed' : formatProblem(item.problem)}
+                                                    <button
+                                                        className="issue-location"
+                                                        aria-expanded={isGroupExpanded(item.signature) ? 'true' : 'false'}
+                                                        onClick={() => toggleGroupExpand(item.signature)}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'transparent', border: 0, padding: 0, cursor: 'pointer' }}
+                                                    >
+                                                        <span style={{ display: 'inline-block', transform: isGroupExpanded(item.signature) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}>❯</span>
+                                                        <span>
+                                                            Cell {item.sampleIssue?.cellReference || `${item.sampleIssue?.column}${item.sampleIssue?.row}`} • Column: {item.column}
+                                                        </span>
+                                                    </button>
+                                                    <span className={`problem-badge`}>
+                                                        {formatProblem(item.sampleIssue?.problem || (item.errorType === 'invalid_characters' ? 'Invalid characters' : 'Length exceeds'))}
+                                                        <span style={{ marginLeft: '0.5rem', color: '#4a5568' }}>× {item.count.toLocaleString()}</span>
                                                     </span>
                                                 </div>
-                                                <div className="issue-content">
-                                                    {item.fixed ? (
-                                                        // Show before/after for fixed issues
-                                                        <div className="change-content">
-                                                            <div className="change-before">
-                                                                <label>Original:</label>
-                                                                <div className="value-display original-value">{item.originalValue}</div>
-                                                            </div>
-                                                            <div className="change-arrow">→</div>
-                                                            <div className="change-after">
-                                                                <label>Fixed:</label>
-                                                                <div className="value-display fixed-value">{getSuggestedFix(item)}</div>
+
+                                                {isGroupExpanded(item.signature) && (
+                                                    <div className="issue-content" role="region" aria-label={`Affected cells for ${item.column} ${item.errorType}`}>
+                                                        <div className="value-section">
+                                                            <label>Affected Cells:</label>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                                <textarea
+                                                                    readOnly
+                                                                    spellCheck={false}
+                                                                    className="cell-refs"
+                                                                    rows={1}
+                                                                    value={(groupRefsCache.get(item.signature)?.cellRefs || []).join(',')}
+                                                                    style={{ height: '2rem', width: '100%', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' }}
+                                                                />
+                                                                <button className="btn btn-secondary btn-sm" onClick={() => copyRefsToClipboard(item.signature)}>Copy</button>
                                                             </div>
                                                         </div>
-                                                    ) : (
-                                                        // Show original layout for unfixed issues
-                                                        <>
-                                                            <div className="value-section">
-                                                                <label>Current Value:</label>
-                                                                <div className="value-display current-value">{item.originalValue}</div>
-                                                            </div>
-                                                            <div className="suggested-fix-section">
-                                                                <label
-                                                                    onMouseEnter={() => setHoveredFixId(item.id)}
-                                                                    onMouseLeave={() => setHoveredFixId(null)}
-                                                                >
-                                                                    {isFixOverridden(item.id) ? 'Overridden Fix:' :
-                                                                        (hoveredFixId === item.id && !editingFixId ? 'Override Fix?' : 'Suggested Fix:')}
-                                                                </label>
-                                                                <div
-                                                                    className={`value-display suggested-value ${hoveredFixId === item.id ? 'hoverable' : ''}`}
-                                                                    onMouseEnter={() => setHoveredFixId(item.id)}
-                                                                    onMouseLeave={() => setHoveredFixId(null)}
-                                                                    onClick={() => {
-                                                                        if (!editingFixId) {
-                                                                            handleFixEditStart(item.id);
-                                                                        }
-                                                                    }}
-                                                                >
-                                                                    {editingFixId === item.id ? (
-                                                                        <input
-                                                                            type="text"
-                                                                            value={getSuggestedFix(item)}
-                                                                            onChange={(e) => handleSuggestedFixEdit(item.id, e.target.value)}
-                                                                            onBlur={handleFixEditEnd}
-                                                                            onKeyPress={(e) => {
-                                                                                if (e.key === 'Enter') {
-                                                                                    handleFixEditEnd();
-                                                                                }
-                                                                            }}
-                                                                            autoFocus
-                                                                            className="edit-fix-input"
-                                                                        />
-                                                                    ) : (
-                                                                        getSuggestedFix(item)
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        </>
-                                                    )}
+                                                    </div>
+                                                )}
 
-                                                    {/* Show character details for invalid character issues (only for unfixed) */}
-                                                    {!item.fixed && item.hasInvalidChars && item.invalidCharacters && item.invalidCharacters.length > 0 && (
-                                                        <div className="character-details">
-                                                            <label>Invalid Characters Found:</label>
-                                                            <div className="character-list">
-                                                                {item.invalidCharacters.slice(0, 5).map((char, charIndex) => (
-                                                                    <span key={charIndex} className="character-badge">
-                                                                        "{char.char}" (U+{char.charCode.toString(16).toUpperCase().padStart(4, '0')}) - {char.description}
-                                                                        {char.replacement && ` → "${char.replacement}"`}
-                                                                    </span>
-                                                                ))}
-                                                                {item.invalidCharacters.length > 5 && (
-                                                                    <span className="character-badge" style={{ background: '#e2e8f0', color: '#4a5568' }}>
-                                                                        +{item.invalidCharacters.length - 5} more characters
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Show length details for length issues (only for unfixed) */}
-                                                    {!item.fixed && item.hasLengthIssues && (
-                                                        <div className="length-details">
-                                                            <label>Length Information:</label>
-                                                            <div className="length-info">
-                                                                <span className="length-badge current-length">
-                                                                    Current: {item.originalValue.length} characters
-                                                                </span>
-                                                                <span className="length-badge max-length">
-                                                                    Maximum: {data.maxCellLength || 1000000} characters
-                                                                </span>
-                                                                {Math.max(0, item.originalValue.length - (data.maxCellLength || 1000000)) > 0 && (
-                                                                    <span className="length-badge over-limit">
-                                                                        Over limit by: {Math.max(0, item.originalValue.length - (data.maxCellLength || 1000000))} characters
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Show problem description for fixed issues */}
-                                                    {item.fixed && item.problem && (
-                                                        <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#718096' }}>
-                                                            <strong>Issue was:</strong> {item.problem}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Actions and New Issue Indicator Container */}
-                                                <div className={`actions-and-warning-container ${newIssueIds.has(item.id) || newIssuesOverridden.has(item.id) ? 'has-new-issue' : ''}`}>
-                                                    {/* New Issue Indicator */}
-                                                    {newIssueIds.has(item.id) && (
-                                                        <div className="new-issue-indicator">
-                                                            <div className="new-issue-warning">
-                                                                <span className="warning-icon">⚠️</span>
-                                                                <span className="warning-text">
-                                                                    This issue has not been encountered. The suggested fix may not be ideal. Please override.
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* New Issue Overridden Indicator */}
-                                                    {newIssuesOverridden.has(item.id) && (
-                                                        <div className="new-issue-indicator">
-                                                            <div className="new-issue-success">
-                                                                <span className="success-icon">✅</span>
-                                                                <span className="success-text">
-                                                                    This issue was not previously encountered. The overridden fix will be added to future suggestions.
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-
+                                                <div className="actions-and-warning-container">
                                                     <div className="issue-actions">
-                                                        {!item.fixed && (
-                                                            <button
-                                                                onClick={() => handleFixIssue(item.id)}
-                                                                className="btn btn-primary btn-sm"
-                                                            >
-                                                                🛠️ Fix This Issue
-                                                            </button>
-                                                        )}
-                                                        {!item.fixed && (
-                                                            <button
-                                                                onClick={async () => {
-                                                                    try {
-                                                                        const charToWhitelistLocal = (item.hasInvalidChars && item.invalidCharacters && item.invalidCharacters.length > 0) ? item.invalidCharacters[0].char : null;
-                                                                        const similar = issues.filter(i => !i.fixed && i.originalValue === item.originalValue);
-                                                                        setNotIssueData({ currentIssue: item, similarIssues: similar, char: charToWhitelistLocal });
-                                                                        setShowNotIssueModal(true);
-                                                                    } catch (e) {
-                                                                        console.error('Not An Issue failed:', e);
-                                                                        alert('Failed to mark as Not An Issue.');
-                                                                    }
-                                                                }}
-                                                                className="btn btn-secondary btn-sm"
-                                                                style={{ marginLeft: '0.5rem' }}
-                                                            >
-                                                                ✅ Not An Issue
-                                                            </button>
-                                                        )}
+                                                        <button
+                                                            onClick={async () => {
+                                                                try {
+                                                                    await applyFixToGroup(item);
+                                                                    removeGroupFromUI(item.signature);
+                                                                    await promptApplyToSiblingGroups(item, 'fix');
+                                                                } catch (e) {
+                                                                    console.error('Bulk fix by signature failed:', e);
+                                                                    alert('Failed to apply fix to group.');
+                                                                }
+                                                            }}
+                                                            className="btn btn-primary btn-sm"
+                                                        >
+                                                            🛠️ Fix This Issue
+                                                        </button>
+                                                        <button
+                                                            onClick={async () => {
+                                                                try {
+                                                                    await applyNotAnIssueToGroup(item);
+                                                                    removeGroupFromUI(item.signature);
+                                                                    await promptApplyToSiblingGroups(item, 'notAnIssue');
+                                                                } catch (e) {
+                                                                    console.error('Not An Issue by signature failed:', e);
+                                                                    alert('Failed to mark group as Not An Issue.');
+                                                                }
+                                                            }}
+                                                            className="btn btn-secondary btn-sm"
+                                                            style={{ marginLeft: '0.5rem' }}
+                                                        >
+                                                            ✅ Not An Issue
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
