@@ -19,7 +19,8 @@ const PORT = process.env.PORT || 3001;
 app.set('etag', false);
 
 // Maximum allowed cell length (default 100 characters)
-const MAX_CELL_LENGTH = parseInt(process.env.MAX_CELL_LENGTH || '100', 10);
+// Disable length validation by default unless explicitly provided
+const MAX_CELL_LENGTH = process.env.MAX_CELL_LENGTH ? parseInt(process.env.MAX_CELL_LENGTH, 10) : Number.MAX_SAFE_INTEGER;
 // Limit issues returned in HTTP response for GCS path to avoid huge payloads
 const ISSUE_PREVIEW_LIMIT = parseInt(process.env.ISSUE_PREVIEW_LIMIT || '20000', 10);
 // Allow diacritics/unicode letters by default (set ALLOW_DIACRITICS=false to disable)

@@ -473,10 +473,10 @@ const ReportDisplay = ({ data, onReset }) => {
     // Normalize problem text to use server-provided max length where older messages were hardcoded
     const formatProblem = (problem) => {
         if (!problem) return '';
-        const maxLen = data.maxCellLength || 1000000;
+        const maxLen = data.maxCellLength || Number.MAX_SAFE_INTEGER;
         return problem
-            .replace(/Length exceeds\s+100\s+characters/g, `Length exceeds ${maxLen} characters`)
-            .replace(/max\s+1000\b/g, `max ${maxLen}`);
+            .replace(/Length exceeds\s+\d+\s+characters/g, `Length exceeds ${maxLen} characters`)
+            .replace(/max\s+\d+\b/g, `max ${maxLen}`);
     };
 
     // Change override functions
