@@ -2260,6 +2260,116 @@ app.get('/api/issues/:sessionId', (req, res) => {
     }
 });
 
+// Grouped issues retrieval (group by column + errorType + originalValue)
+app.get('/api/issues-grouped/:sessionId', (req, res) => {
+    const t0 = Date.now();
+    try {
+        const { sessionId } = req.params;
+        const { offset = '0', limit, onlyUnfixed = 'true' } = req.query || {};
+
+        const session = sessionData.get(sessionId);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        const start = Math.max(0, parseInt(offset, 10) || 0);
+        const max = typeof limit === 'undefined' ? Number.MAX_SAFE_INTEGER : Math.max(1, parseInt(limit, 10) || 1);
+        const filterUnfixed = String(onlyUnfixed).toLowerCase() !== 'false';
+
+        const source = filterUnfixed ? session.issues.filter(i => !i.fixed) : session.issues;
+
+        const groupMap = new Map();
+        for (const issue of source) {
+            const signature = computeIssueSignature(issue);
+            if (!groupMap.has(signature)) {
+                groupMap.set(signature, {
+                    signature,
+                    column: issue.column,
+                    errorType: deriveErrorType(issue),
+                    value: issue.originalValue,
+                    count: 0,
+                    affectedCellCount: 0,
+                    sampleIssue: issue
+                });
+            }
+            const g = groupMap.get(signature);
+            g.count += 1;
+            g.affectedCellCount = g.count;
+        }
+
+        const groups = Array.from(groupMap.values());
+        const totalGroups = groups.length;
+        // Sort by column then by count desc then by value asc for stable UX
+        groups.sort((a, b) => {
+            if (a.column === b.column) {
+                if (b.count === a.count) return String(a.value).localeCompare(String(b.value));
+                return b.count - a.count;
+            }
+            return String(a.column).localeCompare(String(b.column));
+        });
+
+        const slice = groups.slice(start, start + max);
+        const nextOffset = start + slice.length;
+
+        const durationMs = Date.now() - t0;
+        console.log(`[issues-grouped] session=${sessionId} returned=${slice.length}/${totalGroups} offset=${start} limit=${max === Number.MAX_SAFE_INTEGER ? 'all' : max} onlyUnfixed=${filterUnfixed} durMs=${durationMs}`);
+
+        return res.json({
+            success: true,
+            sessionId,
+            groups: slice,
+            returned: slice.length,
+            offset: start,
+            nextOffset,
+            totalGroups,
+            totalIssues: source.length
+        });
+    } catch (error) {
+        console.error('Error retrieving grouped issues:', error);
+        return res.status(500).json({ error: 'Error retrieving grouped issues', details: error.message });
+    }
+});
+
+// Lazy cell refs and IDs for a group signature
+app.get('/api/issues/cell-refs', (req, res) => {
+    const t0 = Date.now();
+    try {
+        const { sessionId, signature, offset = '0', limit } = req.query || {};
+        if (!sessionId || !signature) {
+            return res.status(400).json({ error: 'sessionId and signature are required' });
+        }
+        const session = sessionData.get(sessionId);
+        if (!session) return res.status(404).json({ error: 'Session not found' });
+
+        const start = Math.max(0, parseInt(offset, 10) || 0);
+        const max = typeof limit === 'undefined' ? Number.MAX_SAFE_INTEGER : Math.max(1, parseInt(limit, 10) || 1);
+
+        const { issueIds, cellRefs } = listIssuesBySignature(session, signature, { onlyUnfixed: true });
+        const total = issueIds.length;
+        const idsSlice = issueIds.slice(start, start + max);
+        const refsSlice = cellRefs.slice(start, start + max);
+        const nextOffset = start + idsSlice.length;
+
+        const durationMs = Date.now() - t0;
+        console.log(`[cell-refs] session=${sessionId} sigHash=${shortHash(signature)} returned=${idsSlice.length}/${total} offset=${start} limit=${max === Number.MAX_SAFE_INTEGER ? 'all' : max} durMs=${durationMs}`);
+
+        return res.json({
+            success: true,
+            sessionId,
+            signature,
+            issueIds: idsSlice,
+            cellRefs: refsSlice,
+            returned: idsSlice.length,
+            total,
+            offset: start,
+            nextOffset
+        });
+    } catch (error) {
+        console.error('Error retrieving cell refs:', error);
+        return res.status(500).json({ error: 'Error retrieving cell refs', details: error.message });
+    }
+});
+
 // Download issues report (only unfixed issues)
 app.get('/api/download-issues/:sessionId', (req, res) => {
     try {
