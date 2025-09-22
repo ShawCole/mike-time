@@ -2395,7 +2395,22 @@ app.get('/api/issues/cell-refs', (req, res) => {
             return res.status(400).json({ error: 'sessionId and signature are required' });
         }
         const session = sessionData.get(sessionId);
-        if (!session) return res.status(404).json({ error: 'Session not found' });
+        if (!session) {
+            // Cloud Run may route to a different instance with no in-memory session.
+            const durationMs = Date.now() - t0;
+            console.warn(`[cell-refs] session MISS sessionId=${sessionId} sigHash=${shortHash(signature)} durMs=${durationMs}`);
+            return res.json({
+                success: true,
+                sessionId,
+                signature,
+                issueIds: [],
+                cellRefs: [],
+                returned: 0,
+                total: 0,
+                offset: 0,
+                nextOffset: 0
+            });
+        }
 
         const start = Math.max(0, parseInt(offset, 10) || 0);
         const max = typeof limit === 'undefined' ? Number.MAX_SAFE_INTEGER : Math.max(1, parseInt(limit, 10) || 1);
