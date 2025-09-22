@@ -1828,7 +1828,7 @@ app.post('/api/fix-issue', async (req, res) => {
 // Fix multiple issues (bulk)
 app.post('/api/fix-issues-bulk', async (req, res) => {
     try {
-        const { sessionId, issueIds, issues, overriddenFix } = req.body || {};
+        const { sessionId, issueIds, issues, overriddenFix, groupSignature, idempotencyKey } = req.body || {};
 
         if (!sessionId) {
             return res.status(400).json({ error: 'Session ID is required' });
@@ -1839,21 +1839,41 @@ app.post('/api/fix-issues-bulk', async (req, res) => {
             return res.status(404).json({ error: 'Session not found' });
         }
 
-        // Normalize requested targets: support { issues: [{issueId, overriddenFix}] } or { issueIds: [] } (+ optional global overriddenFix)
-        const targets = Array.isArray(issues) && issues.length > 0
-            ? issues
-            : (Array.isArray(issueIds) ? issueIds.map(id => ({ issueId: id, overriddenFix })) : []);
+        // Resolve targets: prefer groupSignature if provided
+        let targets = [];
+        let mode = 'ids';
+        if (typeof groupSignature === 'string' && groupSignature.length > 0) {
+            const { issueIds: idsFromGroup } = listIssuesBySignature(session, groupSignature, { onlyUnfixed: true });
+            targets = idsFromGroup.map(id => ({ issueId: id, overriddenFix }));
+            mode = 'group';
+        } else if (Array.isArray(issues) && issues.length > 0) {
+            targets = issues;
+            mode = 'issues';
+        } else if (Array.isArray(issueIds)) {
+            targets = issueIds.map(id => ({ issueId: id, overriddenFix }));
+            mode = 'ids';
+        }
 
         if (!Array.isArray(targets) || targets.length === 0) {
             return res.status(400).json({ error: 'issueIds or issues array is required' });
+        }
+
+        // Idempotency check (best-effort, in-memory)
+        const ledgerKey = makeLedgerKey({ sessionId, action: 'fix', signature: groupSignature || '', overriddenFix: overriddenFix || '', idempotencyKey: idempotencyKey || '' });
+        if (idempotencyKey && bulkIdempotencyLedger.has(ledgerKey)) {
+            const prev = bulkIdempotencyLedger.get(ledgerKey);
+            return res.json(prev);
         }
 
         const notFoundIds = [];
         const alreadyFixedIds = [];
         const fixedIssues = [];
 
-        // Process sequentially to keep memory small; could be optimized later with chunking
-        for (const t of targets) {
+        // Process sequentially in chunks to keep memory small
+        const CHUNK_SIZE = 2000;
+        for (let i = 0; i < targets.length; i += CHUNK_SIZE) {
+            const chunk = targets.slice(i, i + CHUNK_SIZE);
+            for (const t of chunk) {
             const targetId = t && (t.issueId || t.id);
             if (typeof targetId === 'undefined' || targetId === null) continue;
 
@@ -1895,18 +1915,24 @@ app.post('/api/fix-issues-bulk', async (req, res) => {
             };
             session.fixedIssues.push(fixedIssue);
             fixedIssues.push(fixedIssue);
+            }
         }
 
-        console.log(`[bulk-fix] session=${sessionId} requested=${targets.length} fixed=${fixedIssues.length} alreadyFixed=${alreadyFixedIds.length} notFound=${notFoundIds.length}`);
+        console.log(`[bulk-fix] session=${sessionId} mode=${mode} sigHash=${groupSignature ? shortHash(groupSignature) : ''} requested=${targets.length} fixed=${fixedIssues.length} alreadyFixed=${alreadyFixedIds.length} notFound=${notFoundIds.length}`);
 
-        return res.json({
+        const response = {
             success: true,
             fixedCount: fixedIssues.length,
             fixedIssues,
             alreadyFixedIds,
             notFoundIds,
             message: `Fixed ${fixedIssues.length} issues; ${alreadyFixedIds.length} already fixed; ${notFoundIds.length} not found.`
-        });
+        };
+
+        if (idempotencyKey) {
+            bulkIdempotencyLedger.set(ledgerKey, response);
+        }
+        return res.json(response);
     } catch (error) {
         console.error('Error fixing issues in bulk:', error);
         return res.status(500).json({ error: 'Error fixing issues in bulk', details: error.message });
@@ -2035,17 +2061,43 @@ app.post('/api/not-an-issue', async (req, res) => {
 // Not An Issue bulk: whitelist and set multiple issues to original value
 app.post('/api/not-an-issue-bulk', async (req, res) => {
     try {
-        const { sessionId, issueIds } = req.body || {};
-        if (!sessionId || !Array.isArray(issueIds) || issueIds.length === 0) {
-            return res.status(400).json({ error: 'sessionId and issueIds[] are required' });
+        const { sessionId, issueIds, groupSignature, idempotencyKey } = req.body || {};
+        if (!sessionId) {
+            return res.status(400).json({ error: 'sessionId is required' });
         }
 
         const session = sessionData.get(sessionId);
         if (!session) return res.status(404).json({ error: 'Session not found' });
 
+        // Resolve targets: prefer groupSignature
+        let ids = [];
+        let mode = 'ids';
+        if (typeof groupSignature === 'string' && groupSignature.length > 0) {
+            const { issueIds: idsFromGroup } = listIssuesBySignature(session, groupSignature, { onlyUnfixed: true });
+            ids = idsFromGroup;
+            mode = 'group';
+        } else if (Array.isArray(issueIds) && issueIds.length > 0) {
+            ids = issueIds;
+            mode = 'ids';
+        }
+
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'issueIds[] or groupSignature is required' });
+        }
+
+        // Idempotency check (best-effort, in-memory)
+        const ledgerKey = makeLedgerKey({ sessionId, action: 'not_an_issue', signature: groupSignature || '', idempotencyKey: idempotencyKey || '' });
+        if (idempotencyKey && bulkIdempotencyLedger.has(ledgerKey)) {
+            const prev = bulkIdempotencyLedger.get(ledgerKey);
+            return res.json(prev);
+        }
+
         const fixedIssues = [];
         const notFoundIds = [];
-        for (const id of issueIds) {
+        const CHUNK_SIZE = 2000;
+        for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunk = ids.slice(i, i + CHUNK_SIZE);
+            for (const id of chunk) {
             const issue = session.issues.find(i => i.id === id);
             if (!issue) { notFoundIds.push(id); continue; }
 
@@ -2080,10 +2132,14 @@ app.post('/api/not-an-issue-bulk', async (req, res) => {
             const idx = session.fixedIssues.findIndex(fi => fi.id === id);
             if (idx >= 0) session.fixedIssues[idx] = updated; else session.fixedIssues.push(updated);
             fixedIssues.push(updated);
+            }
         }
 
-        console.log(`[not-an-issue-bulk] session=${sessionId} requested=${issueIds.length} fixed=${fixedIssues.length} notFound=${notFoundIds.length}`);
-        return res.json({ success: true, fixedCount: fixedIssues.length, fixedIssues, notFoundIds });
+        console.log(`[not-an-issue-bulk] session=${sessionId} mode=${mode} sigHash=${groupSignature ? shortHash(groupSignature) : ''} requested=${ids.length} fixed=${fixedIssues.length} notFound=${notFoundIds.length}`);
+
+        const response = { success: true, fixedCount: fixedIssues.length, fixedIssues, notFoundIds };
+        if (idempotencyKey) bulkIdempotencyLedger.set(ledgerKey, response);
+        return res.json(response);
     } catch (error) {
         console.error('Error in not-an-issue-bulk:', error);
         return res.status(500).json({ error: 'Failed to apply Not An Issue in bulk' });
