@@ -117,6 +117,72 @@ db.all(`SELECT char FROM whitelisted_characters`, [], (err, rows) => {
     }
 });
 
+// ------------------------------
+// Grouping and Idempotency Helpers
+// ------------------------------
+
+// Derive a stable error type for grouping
+const deriveErrorType = (issue) => {
+    if (issue && issue.hasInvalidChars) return 'invalid_characters';
+    if (issue && issue.hasLengthIssues) return 'length_violation';
+    // Fallback: inspect problem text to avoid mis-grouping if flags missing
+    if (issue && typeof issue.problem === 'string') {
+        if (issue.problem.toLowerCase().includes('invalid characters')) return 'invalid_characters';
+        if (issue.problem.toLowerCase().includes('length exceeds')) return 'length_violation';
+    }
+    return 'unknown';
+};
+
+// Simple non-cryptographic hash for short log keys (do not use for security)
+const shortHash = (str) => {
+    try {
+        let h1 = 0x811c9dc5;
+        for (let i = 0; i < str.length; i++) {
+            h1 ^= str.charCodeAt(i);
+            h1 = Math.imul(h1, 16777619) >>> 0;
+        }
+        return (h1 >>> 0).toString(16).padStart(8, '0');
+    } catch (_) {
+        return '00000000';
+    }
+};
+
+// Base64 helper that safely handles UTF-8 input
+const toBase64Utf8 = (s) => Buffer.from(String(s), 'utf8').toString('base64');
+
+// Compute deterministic group signature: column + errorType + originalValue(verbatim)
+const computeIssueSignature = (issue) => {
+    const column = issue && issue.column ? String(issue.column) : '';
+    const errorType = deriveErrorType(issue);
+    const valueB64 = toBase64Utf8(issue && typeof issue.originalValue !== 'undefined' ? issue.originalValue : '');
+    return `v1|column=${column}|type=${errorType}|value=${valueB64}`;
+};
+
+// List issue IDs and cell refs matching a signature in a session
+const listIssuesBySignature = (session, signature, { onlyUnfixed = true } = {}) => {
+    if (!session || !Array.isArray(session.issues)) return { issueIds: [], cellRefs: [], issues: [] };
+    const results = [];
+    for (const issue of session.issues) {
+        if (onlyUnfixed && issue.fixed) continue;
+        const sig = computeIssueSignature(issue);
+        if (sig === signature) results.push(issue);
+    }
+    results.sort((a, b) => (a.row || 0) - (b.row || 0));
+    return {
+        issueIds: results.map(i => i.id),
+        cellRefs: results.map(i => i.cellReference || `${i.column}${i.row}`),
+        issues: results
+    };
+};
+
+// In-memory idempotency ledger for bulk operations (per-process)
+const bulkIdempotencyLedger = new Map();
+const makeLedgerKey = ({ sessionId, action, signature = '', overriddenFix = '', idempotencyKey = '' }) => {
+    const fixHash = overriddenFix ? shortHash(overriddenFix) : '';
+    const sigHash = signature ? shortHash(signature) : '';
+    return `${sessionId}|${action}|${sigHash}|${fixHash}|${idempotencyKey || ''}`;
+};
+
 // Learning Analytics Functions
 const learningAnalytics = {
     // Store an override pattern for learning
