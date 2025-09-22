@@ -904,6 +904,12 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
         let headers = [];
         const batchSize = 1000; // Process in batches for memory efficiency
         let currentBatch = [];
+        // Use bytes read as a more accurate progress indicator (works for small files too)
+        let totalBytes = 0;
+        try {
+            totalBytes = fs.statSync(filePath).size || 0;
+        } catch (_) { totalBytes = 0; }
+        let lastReportTs = 0;
 
         const processBatch = (batch) => {
             batch.forEach(row => {
@@ -961,16 +967,25 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
                 rowIndex++;
             });
 
-            // Update progress
-            if (progressCallback) {
-                progressCallback(Math.min(95, Math.floor((processedRows / 10000) * 95))); // Estimate progress
+            // Progress by bytes if available, else fall back to rows processed heuristic
+            const now = Date.now();
+            if (progressCallback && now - lastReportTs > 200) {
+                let pct = 0;
+                if (totalBytes > 0 && readStream && typeof readStream.bytesRead === 'number') {
+                    pct = Math.floor((readStream.bytesRead / totalBytes) * 95);
+                } else {
+                    // Fallback: assume 100k rows baseline
+                    pct = Math.floor((processedRows / 100000) * 95);
+                }
+                progressCallback(Math.max(1, Math.min(95, pct)));
+                lastReportTs = now;
             }
 
             // Clear batch for memory
             batch.length = 0;
         };
 
-        const stream = fs.createReadStream(filePath)
+        const readStream = fs.createReadStream(filePath)
             .pipe(csv())
             .on('headers', (headerList) => {
                 headers = headerList;
