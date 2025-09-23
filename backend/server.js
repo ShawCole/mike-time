@@ -2701,6 +2701,122 @@ app.get('/api/learning/insights', async (req, res) => {
     }
 });
 
+// List learned patterns with pagination, filtering, and search
+app.get('/api/learning/patterns', (req, res) => {
+    try {
+        const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
+        const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+        const problemType = (req.query.problemType || '').trim();
+        const q = (req.query.q || '').trim();
+
+        const params = [];
+        const whereClauses = [];
+
+        // Combine from override_patterns and character_mappings as patterns
+        // We expose a normalized shape via UNION ALL
+        let baseQuery = `
+            SELECT id as pattern_id, 'override' as source, problem_type as problemType, column_name as columnName,
+                   original_value as originalValue, user_override as suggestion, frequency_count as usageCount,
+                   created_at as createdAt, last_seen as updatedAt
+            FROM override_patterns
+        `;
+        let unionQuery = `
+            SELECT id as pattern_id, 'char_map' as source, 'invalid_characters' as problemType, NULL as columnName,
+                   from_char as originalValue, to_char as suggestion, usage_count as usageCount,
+                   created_at as createdAt, last_seen as updatedAt
+            FROM character_mappings
+        `;
+
+        const applyFilters = (alias) => {
+            const filters = [];
+            if (problemType) { filters.push(`${alias}.problemType = ?`); params.push(problemType); }
+            if (q) {
+                filters.push(`(
+                    ${alias}.originalValue LIKE ? OR
+                    ${alias}.suggestion LIKE ? OR
+                    COALESCE(${alias}.columnName,'') LIKE ?
+                )`);
+                params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+            }
+            return filters.length ? ` WHERE ${filters.join(' AND ')} ` : ' ';
+        };
+
+        // Wrap union with filters applied after union for simplicity
+        const wrapped = `
+            SELECT * FROM (
+                ${baseQuery}
+                UNION ALL
+                ${unionQuery}
+            ) AS patterns
+        `;
+
+        // Apply filters on wrapped result
+        const filtered = wrapped + applyFilters('patterns') + ` ORDER BY updatedAt DESC LIMIT ? OFFSET ?`;
+        const countSql = `SELECT COUNT(1) as cnt FROM (${wrapped + applyFilters('patterns')}) AS c`;
+
+        // Run count first
+        db.get(countSql, params, (err, row) => {
+            if (err) {
+                console.error('Error counting patterns:', err);
+                return res.status(500).json({ error: 'Failed to list patterns' });
+            }
+            const total = row ? row.cnt : 0;
+            // Run page query (append limit/offset)
+            const pageParams = params.slice();
+            pageParams.push(limit, offset);
+            db.all(filtered, pageParams, (err2, rows) => {
+                if (err2) {
+                    console.error('Error querying patterns:', err2);
+                    return res.status(500).json({ error: 'Failed to list patterns' });
+                }
+                res.json({
+                    success: true,
+                    patterns: rows || [],
+                    total,
+                    offset,
+                    nextOffset: Math.min(total, offset + (rows ? rows.length : 0))
+                });
+            });
+        });
+    } catch (error) {
+        console.error('Error in /api/learning/patterns:', error);
+        res.status(500).json({ error: 'Failed to list patterns' });
+    }
+});
+
+// Delete a learned pattern (override or char map) by composite id
+// Client sends id like: source:pattern_id, e.g., "override:123" or "char_map:77"
+app.delete('/api/learning/patterns/:compositeId', (req, res) => {
+    try {
+        const compositeId = String(req.params.compositeId || '');
+        const [source, idStr] = compositeId.split(':');
+        const patternId = parseInt(idStr, 10);
+        if (!source || !patternId || Number.isNaN(patternId)) {
+            return res.status(400).json({ error: 'Invalid pattern id' });
+        }
+
+        const handleResponse = (err, thisChanges) => {
+            if (err) {
+                console.error('Error deleting pattern:', err);
+                return res.status(500).json({ error: 'Failed to delete pattern' });
+            }
+            const deleted = (thisChanges && typeof thisChanges.changes === 'number') ? thisChanges.changes : (db && db.changes) || 0;
+            res.json({ success: true, deleted });
+        };
+
+        if (source === 'override') {
+            db.run(`DELETE FROM override_patterns WHERE id = ?`, [patternId], function(err){ handleResponse(err, this); });
+        } else if (source === 'char_map') {
+            db.run(`DELETE FROM character_mappings WHERE id = ?`, [patternId], function(err){ handleResponse(err, this); });
+        } else {
+            return res.status(400).json({ error: 'Unknown pattern source' });
+        }
+    } catch (error) {
+        console.error('Error in DELETE /api/learning/patterns/:compositeId:', error);
+        res.status(500).json({ error: 'Failed to delete pattern' });
+    }
+});
+
 // Get enhanced suggestion for testing
 app.post('/api/learning/suggest', async (req, res) => {
     try {
