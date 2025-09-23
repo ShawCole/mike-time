@@ -24,6 +24,7 @@ const ReportDisplay = ({ data, onReset }) => {
     const [hoveredChangeId, setHoveredChangeId] = useState(null); // Track which change is being hovered
     const [editingChangeId, setEditingChangeId] = useState(null); // Track which change is being edited
     const [overriddenChanges, setOverriddenChanges] = useState({}); // Track overridden changes by issue ID
+    const [expandedChangeGroups, setExpandedChangeGroups] = useState(new Set());
 
     // Bulk override modal state
     const [showBulkOverrideModal, setShowBulkOverrideModal] = useState(false);
@@ -573,14 +574,41 @@ const ReportDisplay = ({ data, onReset }) => {
     // Filter and sort data based on search term, with new issues first
     const filteredData = useMemo(() => {
         if (showChanges) {
-            if (!searchTerm) return changes;
-            return changes.filter(change =>
-                change.column.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                change.originalValue.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                change.fixedValue.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                change.row.toString().includes(searchTerm) ||
-                (change.cellReference && change.cellReference.toLowerCase().includes(searchTerm.toLowerCase()))
-            );
+            // Group fixed changes (by column + type + originalValue)
+            const lower = (s) => String(s || '').toLowerCase();
+            const groups = new Map();
+            for (const ch of changes) {
+                const errorType = ch.hasInvalidChars ? 'invalid_characters' : (ch.hasLengthIssues ? 'length_violation' : 'unknown');
+                const key = `${ch.column}|${errorType}|${ch.originalValue}`;
+                if (!groups.has(key)) {
+                    groups.set(key, {
+                        key,
+                        column: ch.column,
+                        errorType,
+                        value: ch.originalValue,
+                        count: 0,
+                        sampleChange: ch,
+                        cellRefs: []
+                    });
+                }
+                const g = groups.get(key);
+                g.count += 1;
+                g.cellRefs.push(ch.cellReference || `${ch.column}${ch.row}`);
+            }
+            let arr = Array.from(groups.values());
+            if (searchTerm) {
+                const q = lower(searchTerm);
+                arr = arr.filter(g => lower(g.column).includes(q) || lower(g.value).includes(q) || lower(g.sampleChange?.problem || '').includes(q));
+            }
+            // Sort by column, then count desc, then value
+            arr.sort((a, b) => {
+                if (a.column === b.column) {
+                    if (b.count === a.count) return String(a.value).localeCompare(String(b.value));
+                    return b.count - a.count;
+                }
+                return String(a.column).localeCompare(String(b.column));
+            });
+            return arr;
         } else {
             // Grouped view: operate on groups, default on
             let allGroups = groups;
@@ -1048,79 +1076,60 @@ const ReportDisplay = ({ data, onReset }) => {
                                 <div className="issues-container">
                                     {paginatedData.map((item, index) => (
                                         showChanges ? (
-                                            // Changes Display with Override Functionality
-                                            <div key={`change-${item.id}-${index}`} className={`issue-card change-card ${isChangeOverridden(item.id) ? 'overridden-change' : ''}`}>
+                                            // Grouped Changes Display
+                                            <div key={`change-group-${item.key}-${index}`} className="issue-card change-card">
                                                 <div className="issue-header">
-                                                    <span className="issue-location">
-                                                        Cell {item.cellReference || `${item.column}${item.row}`} • Column: {item.column}
-                                                    </span>
+                                                    <button
+                                                        className="issue-location"
+                                                        aria-expanded={expandedChangeGroups.has(item.key) ? 'true' : 'false'}
+                                                        onClick={() => setExpandedChangeGroups(prev => { const next = new Set(prev); next.has(item.key) ? next.delete(item.key) : next.add(item.key); return next; })}
+                                                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'transparent', border: 0, padding: 0, cursor: 'pointer' }}
+                                                    >
+                                                        <span style={{ display: 'inline-block', transform: expandedChangeGroups.has(item.key) ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }}>❯</span>
+                                                        <span>
+                                                            Cell {item.sampleChange?.cellReference || `${item.sampleChange?.column}${item.sampleChange?.row}`} • Column: {item.column}
+                                                        </span>
+                                                    </button>
                                                     <span className="change-timestamp">
-                                                        {item.fixedAt ? new Date(item.fixedAt).toLocaleTimeString() : 'Fixed'}
+                                                        {item.sampleChange?.fixedAt ? new Date(item.sampleChange.fixedAt).toLocaleTimeString() : 'Fixed'}
+                                                        <span style={{ marginLeft: '0.5rem', color: '#4a5568' }}>× {item.count.toLocaleString()}</span>
                                                     </span>
                                                 </div>
-                                                <div className="change-content">
-                                                    <div className="change-before">
-                                                        <label>Original:</label>
-                                                        <div className="value-display original-value">{item.originalValue}</div>
-                                                    </div>
-                                                    <div className="change-arrow">→</div>
-                                                    <div className="change-after">
-                                                        <label
-                                                            onMouseEnter={() => setHoveredChangeId(item.id)}
-                                                            onMouseLeave={() => setHoveredChangeId(null)}
-                                                        >
-                                                            {editingChangeId === item.id ? 'Overriding Fix:' :
-                                                                isChangeOverridden(item.id) ? 'Overridden Fix:' :
-                                                                    (hoveredChangeId === item.id && !editingChangeId ? 'Override?' : 'Fixed:')}
-                                                        </label>
-                                                        <div
-                                                            className={`value-display fixed-value ${hoveredChangeId === item.id ? 'hoverable' : ''}`}
-                                                            onMouseEnter={() => setHoveredChangeId(item.id)}
-                                                            onMouseLeave={() => setHoveredChangeId(null)}
-                                                            onClick={() => {
-                                                                if (!editingChangeId) {
-                                                                    handleChangeEditStart(item.id);
-                                                                }
-                                                            }}
-                                                        >
-                                                            {editingChangeId === item.id ? (
-                                                                <input
-                                                                    type="text"
-                                                                    value={getFixedValue(item)}
-                                                                    onChange={(e) => handleChangeEdit(item.id, e.target.value)}
-                                                                    onBlur={handleChangeEditEnd}
-                                                                    onKeyPress={(e) => {
-                                                                        if (e.key === 'Enter') {
-                                                                            handleChangeEditEnd();
-                                                                        }
-                                                                    }}
-                                                                    autoFocus
-                                                                    className="edit-fix-input"
+
+                                                {expandedChangeGroups.has(item.key) && (
+                                                    <div className="issue-content" role="region" aria-label={`Affected cells for ${item.column} ${item.errorType}`} style={{ borderBottom: '1px solid #e2e8f0', paddingBottom: '1rem', marginBottom: '1rem' }}>
+                                                        <div className="value-section">
+                                                            <label>Affected Cells:</label>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                                                <textarea
+                                                                    readOnly
+                                                                    spellCheck={false}
+                                                                    className="cell-refs"
+                                                                    rows={1}
+                                                                    value={(item.cellRefs || []).join(',')}
+                                                                    style={{ height: '2.4rem', padding: '0.35rem 0.5rem', lineHeight: '1.2rem', width: '100%', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' }}
                                                                 />
-                                                            ) : (
-                                                                getFixedValue(item)
-                                                            )}
+                                                                <button className="btn btn-secondary btn-sm" onClick={() => navigator.clipboard.writeText((item.cellRefs || []).join(','))}>Copy</button>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                                {item.problem && (
-                                                    <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#718096' }}>
-                                                        <strong>Issue:</strong> {item.problem}
                                                     </div>
                                                 )}
 
-                                                {/* Override Button - Only show when editing or value is overridden */}
-                                                {(editingChangeId === item.id || isChangeOverridden(item.id)) && (
-                                                    <div className="actions-and-warning-container">
-                                                        <div className="override-actions">
-                                                            <button
-                                                                className="btn btn-warning override-button"
-                                                                onClick={() => handleOverrideChange(item)}
-                                                                disabled={editingChangeId === item.id && !getFixedValue(item)}
-                                                            >
-                                                                ⚠️ Override
-                                                            </button>
-                                                        </div>
+                                                {/* Sample original/fixed values */}
+                                                <div className="change-content">
+                                                    <div className="change-before">
+                                                        <label>Original:</label>
+                                                        <div className="value-display original-value">{item.sampleChange?.originalValue}</div>
+                                                    </div>
+                                                    <div className="change-arrow">→</div>
+                                                    <div className="change-after">
+                                                        <label>Fixed:</label>
+                                                        <div className="value-display fixed-value">{item.sampleChange?.suggestedFix}</div>
+                                                    </div>
+                                                </div>
+                                                {item.sampleChange?.problem && (
+                                                    <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#718096' }}>
+                                                        <strong>Issue:</strong> {item.sampleChange.problem}
                                                     </div>
                                                 )}
                                             </div>
