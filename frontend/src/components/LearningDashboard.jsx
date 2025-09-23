@@ -141,7 +141,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
         switch (type) {
             case 'BD': return ['Branches', 'Executives', 'Information', 'Products'];
             case 'IA': return ['Exam', 'Info', 'Prev Employment'];
-            case 'RIA': return ['RIA Information', 'RIA Executives'];
+            case 'RIA': return ['Information', 'Executives'];
             case 'RR': return ['Exam', 'Info', 'Prev Employment'];
             default: return [];
         }
