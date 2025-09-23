@@ -266,7 +266,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                 {/* Level-0 menu grid */}
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                                     {['BD', 'IA', 'RIA', 'RR'].map((t) => (
-                                        <button key={t} className="btn btn-secondary" style={{ padding: '2rem', fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
+                                        <button key={t} className="btn btn-secondary btn-tall" style={{ fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
                                             {t}
                                         </button>
                                     ))}
@@ -292,7 +292,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     gap: '1rem'
                                 }}>
                                     {subGridFor(gridLevel).map((label, idx) => (
-                                        <button key={label} className="btn btn-secondary" style={{ padding: '1.5rem', gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
+                                        <button key={label} className="btn btn-secondary btn-tall" style={{ gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
                                             {label}
                                         </button>
                                     ))}

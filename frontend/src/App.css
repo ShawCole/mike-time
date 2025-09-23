@@ -526,6 +526,16 @@ body {
   display: inline-block;
 }
 
+/* Tall button variant: 18px content line + 32px top/bottom padding = 82px visual height */
+.btn-tall {
+  padding-top: 2rem !important;
+  /* 32px */
+  padding-bottom: 2rem !important;
+  /* 32px */
+  line-height: 18px;
+  /* content height */
+}
+
 .btn-primary {
   background: #667eea;
   color: white;
