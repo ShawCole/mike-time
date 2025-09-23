@@ -78,6 +78,12 @@ const ReportDisplay = ({ data, onReset }) => {
     });
     const [isNotIssueApplying, setIsNotIssueApplying] = useState(false);
 
+    // Follow-up modal state for applying to sibling groups
+    const [showFollowUpModal, setShowFollowUpModal] = useState(false);
+    const [followUpQueue, setFollowUpQueue] = useState([]); // array of groups
+    const [followUpAction, setFollowUpAction] = useState('fix'); // 'fix' | 'notAnIssue'
+    const [isFollowUpApplying, setIsFollowUpApplying] = useState(false);
+
     // Grouped mode state (default on)
     const [groups, setGroups] = useState([]);
     const [groupsOffset, setGroupsOffset] = useState(0);
@@ -208,7 +214,7 @@ const ReportDisplay = ({ data, onReset }) => {
         const entry = groupRefsCache.get(signature);
         const text = entry && Array.isArray(entry.cellRefs) ? entry.cellRefs.join(',') : '';
         if (!text) return;
-        navigator.clipboard.writeText(text).catch(() => {});
+        navigator.clipboard.writeText(text).catch(() => { });
     };
 
     const removeGroupFromUI = (signature) => {
@@ -230,20 +236,29 @@ const ReportDisplay = ({ data, onReset }) => {
         return resp?.data;
     };
 
-    const promptApplyToSiblingGroups = async (baseGroup, action) => {
-        // Find other groups with same column + errorType
-        let remaining = groups.filter(g => g.column === baseGroup.column && g.errorType === baseGroup.errorType && g.signature !== baseGroup.signature);
-        for (const nextGroup of remaining) {
-            // Minimal prompt for now
-            const proceed = window.confirm('We\'ve found this error in another group. Apply the same action to this group as well?');
-            if (!proceed) continue;
-            try {
-                if (action === 'fix') await applyFixToGroup(nextGroup);
-                else if (action === 'notAnIssue') await applyNotAnIssueToGroup(nextGroup);
+    const promptApplyToSiblingGroups = (baseGroup, action) => {
+        const queue = groups.filter(g => g.column === baseGroup.column && g.errorType === baseGroup.errorType && g.signature !== baseGroup.signature);
+        if (queue.length === 0) return;
+        setFollowUpQueue(queue);
+        setFollowUpAction(action);
+        setShowFollowUpModal(true);
+    };
+
+    const handleFollowUpApply = async () => {
+        if (followUpQueue.length === 0) { setShowFollowUpModal(false); return; }
+        setIsFollowUpApplying(true);
+        try {
+            for (const nextGroup of followUpQueue) {
+                if (followUpAction === 'fix') await applyFixToGroup(nextGroup);
+                else await applyNotAnIssueToGroup(nextGroup);
                 removeGroupFromUI(nextGroup.signature);
-            } catch (e) {
-                console.warn('Follow-up group apply failed:', e);
             }
+        } catch (e) {
+            console.warn('Follow-up modal apply failed:', e);
+        } finally {
+            setIsFollowUpApplying(false);
+            setShowFollowUpModal(false);
+            setFollowUpQueue([]);
         }
     };
 
@@ -1336,6 +1351,50 @@ const ReportDisplay = ({ data, onReset }) => {
                             >
                                 ❌ No, Just This One
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Follow-up Apply Modal */}
+            {showFollowUpModal && (
+                <div className="modal-overlay">
+                    <div className="modal-content bulk-override-modal">
+                        {isFollowUpApplying && (
+                            <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 20 }}>
+                                <div style={{ width: 36, height: 36, border: '4px solid #cbd5e0', borderTopColor: '#667eea', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                                <div style={{ marginTop: '0.75rem', color: '#4a5568' }}>
+                                    Applying to {followUpQueue.length} group{followUpQueue.length > 1 ? 's' : ''}...
+                                </div>
+                            </div>
+                        )}
+                        <div className="modal-header" style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => { if (!isFollowUpApplying) { setShowFollowUpModal(false); setFollowUpQueue([]); } }}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                                disabled={isFollowUpApplying}
+                            >×</button>
+                            <h3>🔁 Apply to Other Groups?</h3>
+                            <p>We've found this error in {followUpQueue.length} other group{followUpQueue.length > 1 ? 's' : ''}. Apply the same action to {followUpQueue.length > 1 ? 'these groups' : 'this group'} as well?</p>
+                        </div>
+                        <div className="modal-body">
+                            <div style={{ marginBottom: '0.75rem', color: '#4a5568' }}>
+                                Action: <strong>{followUpAction === 'fix' ? 'Apply Fix' : 'Mark Not An Issue'}</strong>
+                            </div>
+                            <div className="similar-cells-inline" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                                {followUpQueue.slice(0, 6).map(g => (
+                                    <span key={g.signature} className="cell-reference">{g.sampleIssue?.cellReference || `${g.sampleIssue?.column}${g.sampleIssue?.row}`}</span>
+                                ))}
+                                {followUpQueue.length > 6 && (
+                                    <span className="more-cells">+{followUpQueue.length - 6} more</span>
+                                )}
+                            </div>
+                        </div>
+                        <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                            <button className="btn btn-secondary" onClick={() => { setShowFollowUpModal(false); setFollowUpQueue([]); }} disabled={isFollowUpApplying}>Cancel</button>
+                            <button className="btn btn-primary" onClick={handleFollowUpApply} disabled={isFollowUpApplying}>OK</button>
                         </div>
                     </div>
                 </div>
