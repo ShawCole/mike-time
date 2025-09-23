@@ -230,18 +230,16 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                 {stats && stats.problemBreakdown && stats.problemBreakdown.length > 0 && (
                     <div style={{ marginBottom: '2rem' }}>
                         <h3>Problem Type Distribution</h3>
-                        {/* Level-0 header placed at the top of this section, above the grid */}
-                        {gridLevel === 'root' && (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0.75rem 0' }}>
-                                <div style={{ fontWeight: 'bold' }}>All Issues</div>
-                                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                    <button className="btn btn-secondary" title="Download All Issues" onClick={exportData}>⬇️ Download All Issues</button>
-                                </div>
-                            </div>
-                        )}
                         {/* Multi-level grid */}
                         {gridLevel === 'root' && (
                             <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+                                {/* Header inside the container, just below the top border */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <div style={{ fontWeight: 'bold' }}>All Issues</div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn btn-secondary" title="Download All Issues" onClick={exportData}>⬇️ Download All Issues</button>
+                                    </div>
+                                </div>
                                 {/* Level-0 menu grid */}
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                                     {['BD', 'IA', 'RIA', 'RR'].map((t) => (
