@@ -1156,7 +1156,7 @@ const ReportDisplay = ({ data, onReset }) => {
                                                                     className="cell-refs"
                                                                     rows={1}
                                                                     value={(groupRefsCache.get(item.signature)?.cellRefs || []).join(',')}
-                                                                    style={{ height: '2rem', width: '100%', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' }}
+                                                                    style={{ height: '2.4rem', padding: '0.35rem 0.5rem', lineHeight: '1.2rem', width: '100%', whiteSpace: 'nowrap', overflowX: 'auto', overflowY: 'hidden', resize: 'none', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace' }}
                                                                 />
                                                                 <button className="btn btn-secondary btn-sm" onClick={() => copyRefsToClipboard(item.signature)}>Copy</button>
                                                             </div>
