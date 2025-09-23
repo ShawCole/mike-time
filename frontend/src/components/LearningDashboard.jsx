@@ -316,7 +316,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{labelForLevel1(gridLevel)} • {subCategory}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                        <button className="btn btn-secondary" title={`Download All ${gridLevel} Issues`} onClick={exportData}>⬇️ Download All {gridLevel} Issues</button>
+                                        <button className="btn btn-secondary" title={`Download These ${gridLevel} Issues`} onClick={exportData}>⬇️ Download These {gridLevel} Issues</button>
                                         <button className="btn btn-link" onClick={() => setSubCategory(null)}>← Back</button>
                                     </div>
                                 </div>
