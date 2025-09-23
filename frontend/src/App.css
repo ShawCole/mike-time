@@ -826,6 +826,14 @@ body {
   font-size: 1rem;
 }
 
+/* Remove focus outline/highlight from the clickable issue header button */
+.issue-location:focus,
+.issue-location:active,
+.issue-location:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .change-timestamp {
   font-size: 0.875rem;
   color: #718096;
@@ -919,6 +927,20 @@ body {
   font-size: 0.75rem;
   font-family: 'Courier New', monospace;
   border: 1px solid #fc8181;
+}
+
+/* One-line refs textarea appearance and remove blue focus ring */
+.cell-refs {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.cell-refs:focus,
+.cell-refs:active,
+.cell-refs:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: #e2e8f0;
 }
 
 /* Length Details Styles */
