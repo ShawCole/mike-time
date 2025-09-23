@@ -13,6 +13,7 @@ function App() {
   const [progressPercentage, setProgressPercentage] = useState(0);
   const [currentLogLine, setCurrentLogLine] = useState('');
   const [uploadOverlay, setUploadOverlay] = useState({ visible: false, file: null, stage: '', percent: 0, log: '' });
+  const [progressId, setProgressId] = useState(null);
   const progressIntervalRef = useRef(null);
 
 
@@ -98,16 +99,16 @@ function App() {
     setCurrentLogLine('');
   };
 
-  // Start progress polling when loading begins
+  // Start progress polling when loading begins (use progressId tracked separately)
   useEffect(() => {
-    if (isLoading && reportData?.progressId) {
-      startProgressSimulation(reportData.progressId);
+    if (isLoading && progressId) {
+      startProgressSimulation(progressId);
     } else {
       stopProgressSimulation();
     }
 
     return () => stopProgressSimulation();
-  }, [isLoading, reportData?.progressId]);
+  }, [isLoading, progressId]);
 
   // Ship client errors to backend for diagnosis
   useEffect(() => {
@@ -157,12 +158,9 @@ function App() {
     setReportData(null);
   };
 
-  const handleLoadingState = (loading, progressId) => {
+  const handleLoadingState = (loading, pid) => {
     setIsLoading(loading);
-    if (progressId) {
-      // Ensure we have a progressId to poll before final report arrives
-      setReportData(prev => ({ ...(prev || {}), progressId }));
-    }
+    if (pid) setProgressId(pid);
   };
 
   const resetApp = () => {
@@ -235,7 +233,7 @@ function App() {
                 onLoadingChange={handleLoadingState}
                 onStart={(file) => setUploadOverlay({ visible: true, file, stage: 'uploading', percent: 0, log: 'Starting…' })}
                 onProgressUpdate={({ stage, percent, log }) => setUploadOverlay((prev) => ({ ...prev, stage, percent, log }))}
-                renderOverlayExternally={true}
+                renderOverlayExternally={false}
               />
             )}
 
@@ -262,8 +260,8 @@ function App() {
           <LearningDashboard lastFilename={reportData?.filename || ''} />
         )}
 
-        {/* Floating Upload Overlay (driven from FileUpload callbacks) */}
-        {uploadOverlay.visible && !reportData && (
+        {/* Floating Upload Overlay (driven from FileUpload callbacks or isLoading fallback) */}
+        {(uploadOverlay.visible || isLoading) && !reportData && (
           <div style={{ position: 'fixed', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(0,0,0,0.06)', zIndex: 1000 }}>
             <div className="progress-container" style={{ width: 'min(880px, 92vw)', maxWidth: '880px' }}>
               <div className="progress-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -277,16 +275,16 @@ function App() {
                       <span> ({(uploadOverlay.file.size / (1024 * 1024)).toFixed(2)} MB)</span>
                     </div>
                   )}
-                  <div style={{ color: '#4a5568', marginTop: '0.25rem' }}>{uploadOverlay.log}</div>
+                  <div style={{ color: '#4a5568', marginTop: '0.25rem' }}>{uploadOverlay.log || currentLogLine || 'Starting…'}</div>
                 </div>
-                <span className="progress-percentage" style={{ marginLeft: '1rem' }}>{Math.round(uploadOverlay.percent)}%</span>
+                <span className="progress-percentage" style={{ marginLeft: '1rem' }}>{Math.round(uploadOverlay.percent || progressPercentage || 1)}%</span>
               </div>
               <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${Math.round(uploadOverlay.percent)}%`, transition: 'width 0.3s ease' }} />
+                <div className="progress-fill" style={{ width: `${Math.round(uploadOverlay.percent || progressPercentage || 1)}%`, transition: 'width 0.3s ease' }} />
               </div>
               <div className="progress-steps">
                 <div className={`progress-step ${uploadOverlay.stage === 'preparing' ? 'active' : ['uploading', 'processing', 'analyzing'].includes(uploadOverlay.stage) ? 'completed' : ''}`}><span className="step-icon">🚀</span><span className="step-label">Prepare</span></div>
-                <div className={`progress-step ${uploadOverlay.stage === 'uploading' ? 'active' : uploadOverlay.stage !== 'preparing' ? 'completed' : ''}`}><span className="step-icon">📤</span><span className="step-label">Upload</span></div>
+                <div className={`progress-step ${uploadOverlay.stage === 'uploading' || isLoading ? 'active' : uploadOverlay.stage && uploadOverlay.stage !== 'preparing' ? 'completed' : ''}`}><span className="step-icon">📤</span><span className="step-label">Upload</span></div>
                 <div className={`progress-step ${uploadOverlay.stage === 'processing' ? 'active' : uploadOverlay.stage === 'analyzing' ? 'completed' : ''}`}><span className="step-icon">⚡</span><span className="step-label">Process</span></div>
                 <div className={`progress-step ${uploadOverlay.stage === 'analyzing' ? 'active' : ''}`}><span className="step-icon">🔍</span><span className="step-label">Analyze</span></div>
               </div>
