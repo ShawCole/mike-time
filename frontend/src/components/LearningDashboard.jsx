@@ -1,12 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { API_ENDPOINTS } from '../config/api';
 
-const LearningDashboard = () => {
+const LearningDashboard = ({ lastFilename = '' }) => {
     const [stats, setStats] = useState(null);
     const [insights, setInsights] = useState([]);
     const [loading, setLoading] = useState(false);
     const [training, setTraining] = useState(false);
     const [message, setMessage] = useState('');
+
+    // Patterns listing for Problem Type Distribution drill-down
+    const [patterns, setPatterns] = useState([]);
+    const [totalPatterns, setTotalPatterns] = useState(0);
+    const [pageOffset, setPageOffset] = useState(0);
+    const [pageSize, setPageSize] = useState(25);
+    const [patternLoading, setPatternLoading] = useState(false);
+    const [searchQ, setSearchQ] = useState('');
+    const [problemFilter, setProblemFilter] = useState('');
+
+    // Multi-level grid states
+    const [gridLevel, setGridLevel] = useState('root'); // 'root' | 'bd' | 'ia' | 'ria' | 'rr'
+    const [subCategory, setSubCategory] = useState(null); // e.g., 'Branches', 'Exam', etc.
 
     // Fetch learning statistics
     const fetchStats = async () => {
@@ -74,6 +87,60 @@ const LearningDashboard = () => {
         fetchStats();
         fetchInsights();
     }, []);
+
+    const fetchPatterns = async ({ offset = pageOffset, limit = pageSize, q = searchQ, problemType = problemFilter } = {}) => {
+        try {
+            setPatternLoading(true);
+            const url = API_ENDPOINTS.learningPatterns({ offset, limit, problemType, q });
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('Failed to fetch patterns');
+            const data = await res.json();
+            if (data && data.success) {
+                setPatterns(data.patterns || []);
+                setTotalPatterns(data.total || 0);
+                setPageOffset(data.offset || 0);
+            }
+        } catch (e) {
+            console.error('Failed to load patterns:', e);
+            setPatterns([]);
+            setTotalPatterns(0);
+        } finally {
+            setPatternLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchPatterns({ offset: 0 });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // File type categorization helpers (client-side using last filename)
+    const fn = useMemo(() => (lastFilename || '').toLowerCase(), [lastFilename]);
+    const matchesAny = (arr) => arr.some(s => fn.includes(s));
+
+    const fileType = useMemo(() => {
+        if (matchesAny(['broker', 'dealer', 'broker_dealer'])) return 'BD';
+        if (matchesAny(['ia_', 'ia_rep'])) return 'IA';
+        if (matchesAny(['ria_', 'registered_investment', 'registered_investment_advisor', 'ria_executives'])) return 'RIA';
+        if (matchesAny(['registered_rep'])) return 'RR';
+        return '';
+    }, [fn]);
+
+    const subGridFor = (type) => {
+        switch (type) {
+            case 'BD': return ['Branches', 'Executives', 'Information', 'Products'];
+            case 'IA': return ['Exam', 'Info', 'Prev Employment'];
+            case 'RIA': return ['RIA Information', 'RIA Executives'];
+            case 'RR': return ['Exam', 'Info', 'Prev Employment'];
+            default: return [];
+        }
+    };
+
+    // Simple client-side filter for demo purposes; later we can add server-side fileType param
+    const filteredPatterns = useMemo(() => {
+        // For now, just return patterns; future: use subCategory to further filter by keywords
+        return patterns.slice();
+    }, [patterns]);
 
     if (loading && !stats) {
         return (
@@ -157,38 +224,109 @@ const LearningDashboard = () => {
                 {stats && stats.problemBreakdown && stats.problemBreakdown.length > 0 && (
                     <div style={{ marginBottom: '2rem' }}>
                         <h3>Problem Type Distribution</h3>
-                        <div style={{
-                            display: 'grid',
-                            gap: '0.5rem',
-                            backgroundColor: '#f8f9fa',
-                            padding: '1rem',
-                            borderRadius: '8px',
-                            border: '1px solid #dee2e6'
-                        }}>
-                            {stats.problemBreakdown.map((problem, index) => (
-                                <div key={index} style={{
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    padding: '0.75rem',
-                                    backgroundColor: '#ffffff',
-                                    borderRadius: '4px',
-                                    border: '1px solid #e9ecef'
-                                }}>
-                                    <span style={{ fontWeight: '500' }}>{problem.problem_type}</span>
-                                    <span style={{
-                                        backgroundColor: '#007bff',
-                                        color: 'white',
-                                        padding: '0.25rem 0.75rem',
-                                        borderRadius: '12px',
-                                        fontSize: '0.875rem',
-                                        fontWeight: 'bold'
-                                    }}>
-                                        {problem.count}
-                                    </span>
+                        {/* Multi-level grid */}
+                        {gridLevel === 'root' && (
+                            <div style={{
+                                display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem',
+                                backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6'
+                            }}>
+                                {['BD', 'IA', 'RIA', 'RR'].map((t) => (
+                                    <button key={t} className="btn btn-secondary" style={{ padding: '2rem', fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
+                                        {t}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {gridLevel !== 'root' && subCategory == null && (
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: gridLevel === 'RIA' ? '1fr' : (gridLevel === 'IA' || gridLevel === 'RR' ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)'),
+                                gap: '1rem', backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6'
+                            }}>
+                                {subGridFor(gridLevel).map((label, idx) => (
+                                    <button key={label} className="btn btn-secondary" style={{ padding: '1.5rem', gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
+                                        {label}
+                                    </button>
+                                ))}
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button className="btn btn-link" onClick={() => { setGridLevel('root'); setSubCategory(null); }}>← Back</button>
                                 </div>
-                            ))}
-                        </div>
+                            </div>
+                        )}
+
+                        {gridLevel !== 'root' && subCategory != null && (
+                            <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '1rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <div style={{ fontWeight: 'bold' }}>{gridLevel} • {subCategory}</div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn btn-secondary" title={`Download All ${gridLevel} Issues`} onClick={exportData}>⬇️ Download All {gridLevel} Issues</button>
+                                        <button className="btn btn-link" onClick={() => setSubCategory(null)}>← Back</button>
+                                    </div>
+                                </div>
+                                {/* Search and filter */}
+                                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', alignItems: 'center' }}>
+                                    <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search problems…" style={{ flex: 1, padding: '0.5rem' }} />
+                                    <select value={problemFilter} onChange={(e) => setProblemFilter(e.target.value)} style={{ padding: '0.5rem' }}>
+                                        <option value="">All types</option>
+                                        <option value="invalid_characters">Invalid characters</option>
+                                        <option value="length_violation">Length</option>
+                                    </select>
+                                    <button className="btn btn-primary" onClick={() => fetchPatterns({ offset: 0 })}>Apply</button>
+                                </div>
+                                {/* Patterns table */}
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', background: '#fff', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr style={{ background: '#edf2f7' }}>
+                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Type</th>
+                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Problem</th>
+                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Pattern / Original</th>
+                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Suggestion</th>
+                                                <th style={{ textAlign: 'right', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Usage</th>
+                                                <th style={{ padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {patternLoading && (
+                                                <tr><td colSpan={6} style={{ padding: '0.75rem', textAlign: 'center', color: '#666' }}>Loading…</td></tr>
+                                            )}
+                                            {!patternLoading && filteredPatterns.length === 0 && (
+                                                <tr><td colSpan={6} style={{ padding: '0.75rem', textAlign: 'center', color: '#666' }}>No patterns found.</td></tr>
+                                            )}
+                                            {!patternLoading && filteredPatterns.map((p, idx) => (
+                                                <tr key={`${p.source}:${p.pattern_id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                    <td style={{ padding: '0.5rem' }}>{p.source}</td>
+                                                    <td style={{ padding: '0.5rem' }}>{p.problemType}</td>
+                                                    <td style={{ padding: '0.5rem', fontFamily: 'monospace' }}>{p.originalValue}</td>
+                                                    <td style={{ padding: '0.5rem' }}>{p.suggestion}</td>
+                                                    <td style={{ padding: '0.5rem', textAlign: 'right' }}>{p.usageCount || 0}</td>
+                                                    <td style={{ padding: '0.5rem' }}>
+                                                        <button className="btn btn-warning btn-sm" onClick={async () => {
+                                                            const compositeId = `${p.source}:${p.pattern_id}`;
+                                                            if (!confirm(`Delete pattern ${compositeId}?`)) return;
+                                                            try {
+                                                                const resp = await fetch(API_ENDPOINTS.learningDeletePattern(compositeId), { method: 'DELETE' });
+                                                                const j = await resp.json();
+                                                                if (j && j.success) fetchPatterns({ offset: pageOffset });
+                                                            } catch (e) { console.error('Delete failed', e); }
+                                                        }}>Delete</button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {/* Pagination */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem' }}>
+                                    <div style={{ color: '#666' }}>Total: {totalPatterns}</div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn btn-secondary" disabled={pageOffset === 0} onClick={() => fetchPatterns({ offset: Math.max(0, pageOffset - pageSize) })}>Prev</button>
+                                        <button className="btn btn-secondary" disabled={pageOffset + pageSize >= totalPatterns} onClick={() => fetchPatterns({ offset: pageOffset + pageSize })}>Next</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 

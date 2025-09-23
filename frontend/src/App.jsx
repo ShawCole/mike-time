@@ -112,7 +112,7 @@ function App() {
   useEffect(() => {
     const onError = (event) => {
       try {
-        fetch(`${API_ENDPOINTS.health.replace('/api/health','')}/api/client-log`, {
+        fetch(`${API_ENDPOINTS.health.replace('/api/health', '')}/api/client-log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -121,12 +121,12 @@ function App() {
             stack: event?.error?.stack || '',
             meta: { source: event?.filename, line: event?.lineno, col: event?.colno }
           })
-        }).catch(() => {});
-      } catch (_) {}
+        }).catch(() => { });
+      } catch (_) { }
     };
     const onRejection = (event) => {
       try {
-        fetch(`${API_ENDPOINTS.health.replace('/api/health','')}/api/client-log`, {
+        fetch(`${API_ENDPOINTS.health.replace('/api/health', '')}/api/client-log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -135,8 +135,8 @@ function App() {
             stack: event?.reason?.stack || String(event?.reason || ''),
             meta: {}
           })
-        }).catch(() => {});
-      } catch (_) {}
+        }).catch(() => { });
+      } catch (_) { }
     };
     window.addEventListener('error', onError);
     window.addEventListener('unhandledrejection', onRejection);
@@ -285,7 +285,7 @@ function App() {
         )}
 
         {activeTab === 'learning' && (
-          <LearningDashboard />
+          <LearningDashboard lastFilename={reportData?.filename || ''} />
         )}
       </main>
 
