@@ -197,6 +197,8 @@ const ReportDisplay = ({ data, onReset }) => {
 
                 // If server returned nothing (likely different instance), fallback to client-derived refs
                 if ((issueIds.length === 0 && cellRefs.length === 0)) {
+                    // Opportunistic warm-up: try to touch the session endpoint first to pin the instance
+                    try { await axios.get(API_ENDPOINTS.getSessionInfo(data.sessionId)); } catch (_) {}
                     const group = groups.find(g => g.signature === signature);
                     // Ensure we have issues to filter; if not, fetch the first page now
                     let sourceIssues = issues;

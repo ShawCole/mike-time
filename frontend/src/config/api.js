@@ -22,6 +22,7 @@ export const API_ENDPOINTS = {
         `${API_BASE_URL}/api/issues-grouped/${sessionId}?offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}&onlyUnfixed=${onlyUnfixed ? 'true' : 'false'}`,
     getIssueCellRefs: (sessionId, signature, offset = 0, limit) =>
         `${API_BASE_URL}/api/issues/cell-refs?sessionId=${encodeURIComponent(sessionId)}&signature=${encodeURIComponent(signature)}&offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}`,
+    getSessionInfo: (sessionId) => `${API_BASE_URL}/api/session/${sessionId}`,
     health: `${API_BASE_URL}/api/health`,
     // Learning endpoints
     learningStats: `${API_BASE_URL}/api/learning/stats`,
