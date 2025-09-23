@@ -126,6 +126,17 @@ const LearningDashboard = ({ lastFilename = '' }) => {
         return '';
     }, [fn]);
 
+    // Expand acronyms to full display labels for titles/buttons
+    const labelForLevel1 = (code) => {
+        switch (code) {
+            case 'BD': return 'Broker Dealers';
+            case 'IA': return 'Investment Advisors';
+            case 'RIA': return 'Registered Investment Advisors';
+            case 'RR': return 'Registered Representatives';
+            default: return String(code || '');
+        }
+    };
+
     const subGridFor = (type) => {
         switch (type) {
             case 'BD': return ['Branches', 'Executives', 'Information', 'Products'];
@@ -258,7 +269,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                             <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
                                 {/* Header inside the container, just below the top border */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                                    <div style={{ fontWeight: 'bold' }}>All Issues</div>
+                                    <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>All Issues</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button className="btn btn-secondary" title="Download All Issues" onClick={exportData}>⬇️ Download All Issues</button>
                                     </div>
@@ -267,7 +278,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                                     {['BD', 'IA', 'RIA', 'RR'].map((t) => (
                                         <button key={t} className="btn btn-secondary btn-tall" style={{ fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
-                                            {t}
+                                            {labelForLevel1(t)}
                                         </button>
                                     ))}
                                 </div>
@@ -278,7 +289,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                             <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
                                 {/* Top header row to match level-2 layout */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                                    <div style={{ fontWeight: 'bold' }}>{gridLevel}</div>
+                                    <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{labelForLevel1(gridLevel)}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button className="btn btn-secondary" title={`Download All ${gridLevel} Issues`} onClick={exportData}>⬇️ Download All {gridLevel} Issues</button>
                                         <button className="btn btn-link" onClick={() => { setGridLevel('root'); setSubCategory(null); }}>← Back</button>
@@ -303,7 +314,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         {gridLevel !== 'root' && subCategory != null && (
                             <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '1rem', width: '955px', margin: '0 auto' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                                    <div style={{ fontWeight: 'bold' }}>{gridLevel} • {subCategory}</div>
+                                    <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{labelForLevel1(gridLevel)} • {subCategory}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button className="btn btn-secondary" title={`Download All ${gridLevel} Issues`} onClick={exportData}>⬇️ Download All {gridLevel} Issues</button>
                                         <button className="btn btn-link" onClick={() => setSubCategory(null)}>← Back</button>
