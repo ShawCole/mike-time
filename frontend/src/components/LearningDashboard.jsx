@@ -281,6 +281,9 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                             {labelForLevel1(t)}
                                         </button>
                                     ))}
+                                    <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2', fontSize: '1rem', textAlign: 'center' }}>
+                                        See All Issues
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -302,11 +305,32 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     gridTemplateColumns: gridLevel === 'RIA' ? '1fr' : (gridLevel === 'IA' || gridLevel === 'RR' ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)'),
                                     gap: '1rem'
                                 }}>
-                                    {subGridFor(gridLevel).map((label, idx) => (
-                                        <button key={label} className="btn btn-secondary btn-tall" style={{ gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
+                                    {subGridFor(gridLevel).map((label) => (
+                                        <button key={label} className="btn btn-secondary btn-tall" onClick={() => setSubCategory(label)}>
                                             {label}
                                         </button>
                                     ))}
+                                    {/* Extra CTA buttons by level */}
+                                    {gridLevel === 'BD' && (
+                                        <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2' }}>
+                                            See Issues From All BD Files
+                                        </button>
+                                    )}
+                                    {gridLevel === 'RIA' && (
+                                        <button className="btn btn-secondary btn-tall">
+                                            See Issues From All RIA Files
+                                        </button>
+                                    )}
+                                    {gridLevel === 'IA' && (
+                                        <button className="btn btn-secondary btn-tall">
+                                            See Issues From All IA Files
+                                        </button>
+                                    )}
+                                    {gridLevel === 'RR' && (
+                                        <button className="btn btn-secondary btn-tall">
+                                            See Issues From All RR Files
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         )}
