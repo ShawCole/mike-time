@@ -91,10 +91,10 @@ const LearningDashboard = ({ lastFilename = '' }) => {
         fetchInsights();
     }, []);
 
-    const fetchPatterns = async ({ offset = pageOffset, limit = pageSize, q = searchQ, problemType = problemFilter, category = aggregateView } = {}) => {
+    const fetchPatterns = async ({ offset = pageOffset, limit = pageSize, q = searchQ, problemType = problemFilter, category = aggregateView, level2 = subCategory } = {}) => {
         try {
             setPatternLoading(true);
-            const url = API_ENDPOINTS.learningPatterns({ offset, limit, problemType, q, category });
+            const url = API_ENDPOINTS.learningPatterns({ offset, limit, problemType, q, category, level2 });
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch patterns');
             const data = await res.json();
@@ -187,11 +187,17 @@ const LearningDashboard = ({ lastFilename = '' }) => {
             const cat = String(p.category || p.level1 || '').toUpperCase();
             return cat === aggregateView;
         };
+        const byLevel2 = (p) => {
+            if (!subCategory) return true;
+            // Legacy rows without level2 are treated as present in all sub-categories
+            if (!p.level2) return true;
+            return String(p.level2 || '').toLowerCase() === String(subCategory || '').toLowerCase();
+        };
 
         // Client-side de-duplication across sub-categories by stable key
         const dedup = new Map();
         for (const row of patterns) {
-            if (!byProblem(row) || !bySearch(row) || !byCategory(row)) continue;
+            if (!byProblem(row) || !bySearch(row) || !byCategory(row) || !byLevel2(row)) continue;
             const key = `${row.problemType}|${row.originalValue}|${row.suggestion}`;
             if (!dedup.has(key)) dedup.set(key, row);
         }
@@ -359,7 +365,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     gap: '1rem'
                                 }}>
                                     {subGridFor(gridLevel).map((label) => (
-                                        <button key={label} className="btn btn-secondary btn-tall" onClick={() => setSubCategory(label)}>
+                                        <button key={label} className="btn btn-secondary btn-tall" onClick={() => { setSubCategory(label); setAggregateView(null); fetchPatterns({ offset: 0, category: gridLevel, level2: label }); }}>
                                             {label}
                                         </button>
                                     ))}
@@ -394,7 +400,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{aggregateView ? (aggregateView === 'ALL' ? 'All Issues' : `${labelForLevel1(aggregateView)} • All Files`) : `${labelForLevel1(gridLevel)} • ${subCategory}`}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button className="btn btn-secondary" title={`Download These ${aggregateView || gridLevel} Issues`} onClick={exportData}>⬇️ Download These {aggregateView || gridLevel} Issues</button>
-                                        <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); }}>← Back</button>
+                                        <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); fetchPatterns({ offset: 0, category: gridLevel }); }}>← Back</button>
                                     </div>
                                 </div>
                                 {/* Search and filter */}

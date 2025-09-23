@@ -35,16 +35,15 @@ export const API_ENDPOINTS = {
     learningSuggest: `${API_BASE_URL}/api/learning/suggest`,
     learningExport: `${API_BASE_URL}/api/learning/export`,
     learningTrain: `${API_BASE_URL}/api/learning/train`,
-    learningPatterns: ({ offset = 0, limit = 50, problemType, q } = {}) => {
+    learningPatterns: (opts = {}) => {
+        const { offset = 0, limit = 50, problemType, q, category, level2 } = opts;
         const params = new URLSearchParams();
         params.set('offset', String(offset));
         params.set('limit', String(limit));
         if (problemType) params.set('problemType', problemType);
         if (q) params.set('q', q);
-        // Optional category (level1): BD | IA | RIA | RR | ALL (future server support)
-        if (typeof arguments[0] === 'object' && arguments[0] && arguments[0].category) {
-            params.set('category', arguments[0].category);
-        }
+        if (category) params.set('category', category);
+        if (level2) params.set('level2', level2);
         return `${API_BASE_URL}/api/learning/patterns?${params.toString()}`;
     },
     learningDeletePattern: (compositeId) => `${API_BASE_URL}/api/learning/patterns/${encodeURIComponent(compositeId)}`,

@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import { API_ENDPOINTS } from '../config/api';
 
-const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
+const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpdate, renderOverlayExternally = true }) => {
     const [selectedFile, setSelectedFile] = useState(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
@@ -17,6 +17,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             return true;
         }
     });
+    const [uploadLog, setUploadLog] = useState('Initializing file upload...');
+    const [lastTick, setLastTick] = useState({ t: 0, loaded: 0 });
 
     const uploadFile = async (file) => {
         try {
@@ -54,6 +56,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
     // High-performance upload for large files (>32MB) via Cloud Storage
     const uploadLargeFile = async (file, fileSizeMB) => {
         setCurrentStage('preparing');
+        if (onProgressUpdate) onProgressUpdate({ stage: 'preparing', percent: 0, log: 'Preparing high-performance upload…' });
         console.log(`Using high-performance upload for ${fileSizeMB.toFixed(2)}MB file`);
 
         try {
@@ -62,6 +65,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             const p = await axios.post(API_ENDPOINTS.progressStart);
             const activeProgressId = p.data?.progressId;
             onLoadingChange(true, activeProgressId);
+            if (onStart) onStart(file);
 
             const signedUrlResponse = await axios.post(API_ENDPOINTS.getUploadUrl, {
                 filename: file.name,
@@ -72,6 +76,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
 
             // Step 2: Upload directly to Cloud Storage
             setCurrentStage('uploading');
+            if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: 0, log: 'Starting upload…' });
             await axios.put(uploadUrl, file, {
                 headers: {
                     'Content-Type': file.type || 'text/csv',
@@ -83,6 +88,21 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                         (progressEvent.loaded * 100) / progressEvent.total
                     );
                     setUploadProgress(percentCompleted);
+
+                    // Live log with instantaneous rate
+                    const now = Date.now();
+                    const dt = Math.max(1, now - (lastTick.t || now));
+                    const dBytes = Math.max(0, progressEvent.loaded - (lastTick.loaded || 0));
+                    const bytesPerSec = (dBytes * 1000) / dt;
+                    setLastTick({ t: now, loaded: progressEvent.loaded });
+                    const fmt = (b) => {
+                        if (b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(2) + ' MB';
+                        if (b >= 1024) return (b / 1024).toFixed(2) + ' KB';
+                        return b + ' B';
+                    };
+                    const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)} (${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s)`;
+                    setUploadLog(logLine);
+                    if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: percentCompleted, log: logLine });
                 }
             });
 
@@ -90,6 +110,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             setCurrentStage('processing');
             setUploadProgress(100);
             setProcessingProgress(10);
+            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 10, log: 'Streaming to server and processing…' });
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
@@ -130,6 +151,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
     // Regular upload for smaller files (<32MB)
     const uploadSmallFile = async (file) => {
         setCurrentStage('uploading');
+        if (onStart) onStart(file);
+        if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: 0, log: 'Starting upload…' });
 
         const formData = new FormData();
         formData.append('file', file);
@@ -156,15 +179,32 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
                 );
                 setUploadProgress(percentCompleted);
 
+                // Live upload log + speed
+                const now = Date.now();
+                const dt = Math.max(1, now - (lastTick.t || now));
+                const dBytes = Math.max(0, progressEvent.loaded - (lastTick.loaded || 0));
+                const bytesPerSec = (dBytes * 1000) / dt;
+                setLastTick({ t: now, loaded: progressEvent.loaded });
+                const fmt = (b) => {
+                    if (b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(2) + ' MB';
+                    if (b >= 1024) return (b / 1024).toFixed(2) + ' KB';
+                    return b + ' B';
+                };
+                const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)} (${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s)`;
+                setUploadLog(logLine);
+                if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: percentCompleted, log: logLine });
+
                 if (percentCompleted === 100) {
                     setCurrentStage('processing');
                     setProcessingProgress(10);
+                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 10, log: 'Streaming to server and processing…' });
                 }
             }
         });
 
         setCurrentStage('analyzing');
         setProcessingProgress(100);
+        if (onProgressUpdate) onProgressUpdate({ stage: 'analyzing', percent: 100, log: 'Analyzing quality issues…' });
 
         // Normalize response (ensure issueCount present for UI)
         const normalized = {
@@ -282,54 +322,67 @@ const FileUpload = ({ onUpload, onError, onLoadingChange }) => {
             )}
 
             {/* Progress Bar */}
-            {currentStage && (
-                <div className="progress-container">
-                    <div className="progress-header">
-                        <h4 style={{ margin: '0 0 0.5rem 0', color: '#4a5568' }}>
-                            {currentStage === 'preparing' && '🚀 Preparing High-Performance Upload...'}
-                            {currentStage === 'uploading' && '📤 Uploading File...'}
-                            {currentStage === 'processing' && '⚡ Streaming & Processing Data...'}
-                            {currentStage === 'analyzing' && '🔍 Analyzing Quality Issues...'}
-                        </h4>
-                        <span className="progress-percentage">
-                            {currentStage === 'uploading' ? `${uploadProgress}%` : `${processingProgress}%`}
-                        </span>
-                    </div>
+            {!renderOverlayExternally && currentStage && (
+                <div style={{ position: 'fixed', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(0,0,0,0.06)', zIndex: 1000 }}>
+                    <div className="progress-container" style={{ width: 'min(880px, 92vw)', maxWidth: '880px' }}>
+                        <div className="progress-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ minWidth: 0 }}>
+                                {selectedFile && (
+                                    <div style={{ color: '#2d3748', fontWeight: 600 }}>
+                                        <span>📤 Uploading: </span>
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', verticalAlign: 'bottom', maxWidth: '48ch' }} title={selectedFile.name}>
+                                            {selectedFile.name}
+                                        </span>
+                                        <span> ({formatFileSize(selectedFile.size)})</span>
+                                    </div>
+                                )}
+                                <div style={{ color: '#4a5568', marginTop: '0.25rem' }}>
+                                    {currentStage === 'preparing' && 'Preparing high-performance upload…'}
+                                    {currentStage === 'uploading' && uploadLog}
+                                    {currentStage === 'processing' && 'Streaming to server and processing…'}
+                                    {currentStage === 'analyzing' && 'Analyzing quality issues…'}
+                                </div>
+                            </div>
+                            <span className="progress-percentage" style={{ marginLeft: '1rem' }}>
+                                {currentStage === 'uploading' ? `${uploadProgress}%` : `${processingProgress}%`}
+                            </span>
+                        </div>
 
-                    <div className="progress-bar">
-                        <div
-                            className="progress-fill"
-                            style={{
-                                width: `${currentStage === 'uploading' ? uploadProgress : processingProgress}%`,
-                                transition: 'width 0.3s ease'
-                            }}
-                        />
-                    </div>
+                        <div className="progress-bar">
+                            <div
+                                className="progress-fill"
+                                style={{
+                                    width: `${currentStage === 'uploading' ? uploadProgress : processingProgress}%`,
+                                    transition: 'width 0.3s ease'
+                                }}
+                            />
+                        </div>
 
-                    <div className="progress-steps">
-                        <div className={`progress-step ${currentStage === 'preparing' ? 'active' : ['uploading', 'processing', 'analyzing'].includes(currentStage) ? 'completed' : ''}`}>
-                            <span className="step-icon">🚀</span>
-                            <span className="step-label">Prepare</span>
+                        <div className="progress-steps">
+                            <div className={`progress-step ${currentStage === 'preparing' ? 'active' : ['uploading', 'processing', 'analyzing'].includes(currentStage) ? 'completed' : ''}`}>
+                                <span className="step-icon">🚀</span>
+                                <span className="step-label">Prepare</span>
+                            </div>
+                            <div className={`progress-step ${currentStage === 'uploading' ? 'active' : uploadProgress === 100 ? 'completed' : ''}`}>
+                                <span className="step-icon">📤</span>
+                                <span className="step-label">Upload</span>
+                            </div>
+                            <div className={`progress-step ${currentStage === 'processing' ? 'active' : processingProgress === 100 ? 'completed' : ''}`}>
+                                <span className="step-icon">⚡</span>
+                                <span className="step-label">Process</span>
+                            </div>
+                            <div className={`progress-step ${currentStage === 'analyzing' ? 'active' : ''}`}>
+                                <span className="step-icon">🔍</span>
+                                <span className="step-label">Analyze</span>
+                            </div>
                         </div>
-                        <div className={`progress-step ${currentStage === 'uploading' ? 'active' : uploadProgress === 100 ? 'completed' : ''}`}>
-                            <span className="step-icon">📤</span>
-                            <span className="step-label">Upload</span>
-                        </div>
-                        <div className={`progress-step ${currentStage === 'processing' ? 'active' : processingProgress === 100 ? 'completed' : ''}`}>
-                            <span className="step-icon">⚡</span>
-                            <span className="step-label">Process</span>
-                        </div>
-                        <div className={`progress-step ${currentStage === 'analyzing' ? 'active' : ''}`}>
-                            <span className="step-icon">🔍</span>
-                            <span className="step-label">Analyze</span>
+
+                        {/* Live logs area replaces filename block */}
+                        <div className="log-display" style={{ marginTop: '0.75rem' }}>
+                            <div className="log-icon">📋</div>
+                            <div className="log-text">{uploadLog}</div>
                         </div>
                     </div>
-
-                    {selectedFile && (
-                        <div className="file-details-small">
-                            <strong>{selectedFile.name}</strong> ({formatFileSize(selectedFile.size)})
-                        </div>
-                    )}
                 </div>
             )}
 
