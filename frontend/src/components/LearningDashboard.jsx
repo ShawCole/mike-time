@@ -138,9 +138,15 @@ const LearningDashboard = ({ lastFilename = '' }) => {
 
     // Simple client-side filter for demo purposes; later we can add server-side fileType param
     const filteredPatterns = useMemo(() => {
-        // For now, just return patterns; future: use subCategory to further filter by keywords
-        return patterns.slice();
-    }, [patterns]);
+        const q = (searchQ || '').toLowerCase();
+        const byProblem = (p) => !problemFilter || (p.problemType === problemFilter);
+        const bySearch = (p) => !q ||
+            String(p.problemType || '').toLowerCase().includes(q) ||
+            String(p.originalValue || '').toLowerCase().includes(q) ||
+            String(p.suggestion || '').toLowerCase().includes(q);
+        // Client-side fallback filter to ensure dropdown reflects Problem types even if server ignores it
+        return patterns.filter(p => byProblem(p) && bySearch(p));
+    }, [patterns, searchQ, problemFilter]);
 
     if (loading && !stats) {
         return (
@@ -226,15 +232,23 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         <h3>Problem Type Distribution</h3>
                         {/* Multi-level grid */}
                         {gridLevel === 'root' && (
-                            <div style={{
-                                display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem',
-                                backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6'
-                            }}>
-                                {['BD', 'IA', 'RIA', 'RR'].map((t) => (
-                                    <button key={t} className="btn btn-secondary" style={{ padding: '2rem', fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
-                                        {t}
-                                    </button>
-                                ))}
+                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+                                {/* Level-0 header row */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <div style={{ fontWeight: 'bold' }}>All Issues</div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn btn-secondary" title="Download All Issues" onClick={exportData}>⬇️ Download All Issues</button>
+                                    </div>
+                                </div>
+
+                                {/* Level-0 menu grid */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                                    {['BD', 'IA', 'RIA', 'RR'].map((t) => (
+                                        <button key={t} className="btn btn-secondary" style={{ padding: '2rem', fontSize: '1rem' }} onClick={() => { setGridLevel(t); setSubCategory(null); }}>
+                                            {t}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         )}
 
@@ -277,7 +291,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', alignItems: 'center' }}>
                                     <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="Search problems…" style={{ flex: 1, padding: '0.5rem' }} />
                                     <select value={problemFilter} onChange={(e) => setProblemFilter(e.target.value)} style={{ padding: '0.5rem' }}>
-                                        <option value="">All types</option>
+                                        <option value="">All problems</option>
                                         <option value="invalid_characters">Invalid characters</option>
                                         <option value="length_violation">Length</option>
                                     </select>
@@ -288,7 +302,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     <table style={{ width: '100%', background: '#fff', borderCollapse: 'collapse' }}>
                                         <thead>
                                             <tr style={{ background: '#edf2f7' }}>
-                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Type</th>
+                                                <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Source</th>
                                                 <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Problem</th>
                                                 <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Pattern / Original</th>
                                                 <th style={{ textAlign: 'left', padding: '0.5rem', borderBottom: '1px solid #e2e8f0' }}>Suggestion</th>
@@ -305,7 +319,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                             )}
                                             {!patternLoading && filteredPatterns.map((p, idx) => (
                                                 <tr key={`${p.source}:${p.pattern_id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                    <td style={{ padding: '0.5rem' }}>{p.source}</td>
+                                                    <td style={{ padding: '0.5rem' }}>{p.source === 'override' ? 'Override' : 'Algo'}</td>
                                                     <td style={{ padding: '0.5rem' }}>{p.problemType}</td>
                                                     <td style={{ padding: '0.5rem', fontFamily: 'monospace' }}>{p.originalValue}</td>
                                                     <td style={{ padding: '0.5rem' }}>{p.suggestion}</td>
