@@ -22,6 +22,11 @@ export const API_ENDPOINTS = {
         `${API_BASE_URL}/api/issues-grouped/${sessionId}?offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}&onlyUnfixed=${onlyUnfixed ? 'true' : 'false'}`,
     getIssueCellRefs: (sessionId, signature, offset = 0, limit) =>
         `${API_BASE_URL}/api/issues/cell-refs?sessionId=${encodeURIComponent(sessionId)}&signature=${encodeURIComponent(signature)}&offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}`,
+    // Grouped changes and cell refs
+    getChangesGrouped: (sessionId, offset = 0, limit) =>
+        `${API_BASE_URL}/api/changes-grouped?sessionId=${encodeURIComponent(sessionId)}&offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}`,
+    getChangeCellRefs: (sessionId, signature, column, offset = 0, limit) =>
+        `${API_BASE_URL}/api/changes/cell-refs?sessionId=${encodeURIComponent(sessionId)}&signature=${encodeURIComponent(signature)}${column ? `&column=${encodeURIComponent(column)}` : ''}&offset=${offset}${typeof limit === 'number' ? `&limit=${limit}` : ''}`,
     getSessionInfo: (sessionId) => `${API_BASE_URL}/api/session/${sessionId}`,
     health: `${API_BASE_URL}/api/health`,
     // Learning endpoints
@@ -30,6 +35,15 @@ export const API_ENDPOINTS = {
     learningSuggest: `${API_BASE_URL}/api/learning/suggest`,
     learningExport: `${API_BASE_URL}/api/learning/export`,
     learningTrain: `${API_BASE_URL}/api/learning/train`,
+    learningPatterns: ({ offset = 0, limit = 50, problemType, q } = {}) => {
+        const params = new URLSearchParams();
+        params.set('offset', String(offset));
+        params.set('limit', String(limit));
+        if (problemType) params.set('problemType', problemType);
+        if (q) params.set('q', q);
+        return `${API_BASE_URL}/api/learning/patterns?${params.toString()}`;
+    },
+    learningDeletePattern: (compositeId) => `${API_BASE_URL}/api/learning/patterns/${encodeURIComponent(compositeId)}`,
     // Whitelisting (Not An Issue)
     notAnIssue: `${API_BASE_URL}/api/not-an-issue`,
     notAnIssueBulk: `${API_BASE_URL}/api/not-an-issue-bulk`

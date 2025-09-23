@@ -239,18 +239,27 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         )}
 
                         {gridLevel !== 'root' && subCategory == null && (
-                            <div style={{
-                                display: 'grid',
-                                gridTemplateColumns: gridLevel === 'RIA' ? '1fr' : (gridLevel === 'IA' || gridLevel === 'RR' ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)'),
-                                gap: '1rem', backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6'
-                            }}>
-                                {subGridFor(gridLevel).map((label, idx) => (
-                                    <button key={label} className="btn btn-secondary" style={{ padding: '1.5rem', gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
-                                        {label}
-                                    </button>
-                                ))}
-                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                    <button className="btn btn-link" onClick={() => { setGridLevel('root'); setSubCategory(null); }}>← Back</button>
+                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+                                {/* Top header row to match level-2 layout */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                    <div style={{ fontWeight: 'bold' }}>{gridLevel}</div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn btn-secondary" title={`Download All ${gridLevel} Issues`} onClick={exportData}>⬇️ Download All {gridLevel} Issues</button>
+                                        <button className="btn btn-link" onClick={() => { setGridLevel('root'); setSubCategory(null); }}>← Back</button>
+                                    </div>
+                                </div>
+
+                                {/* Level-1 menu grid */}
+                                <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: gridLevel === 'RIA' ? '1fr' : (gridLevel === 'IA' || gridLevel === 'RR' ? 'repeat(2, 1fr)' : 'repeat(2, 1fr)'),
+                                    gap: '1rem'
+                                }}>
+                                    {subGridFor(gridLevel).map((label, idx) => (
+                                        <button key={label} className="btn btn-secondary" style={{ padding: '1.5rem', gridColumn: (gridLevel === 'IA' || gridLevel === 'RR') && idx === 2 ? '1 / span 2' : undefined }} onClick={() => setSubCategory(label)}>
+                                            {label}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         )}
