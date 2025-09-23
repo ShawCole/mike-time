@@ -192,19 +192,51 @@ const ReportDisplay = ({ data, onReset }) => {
         if (!groupRefsCache.get(signature)) {
             try {
                 const resp = await axios.get(API_ENDPOINTS.getIssueCellRefs(data.sessionId, signature));
-                const issueIds = Array.isArray(resp?.data?.issueIds) ? resp.data.issueIds : [];
-                const cellRefs = Array.isArray(resp?.data?.cellRefs) ? resp.data.cellRefs : [];
+                let issueIds = Array.isArray(resp?.data?.issueIds) ? resp.data.issueIds : [];
+                let cellRefs = Array.isArray(resp?.data?.cellRefs) ? resp.data.cellRefs : [];
+
+                // If server returned nothing (likely different instance), fallback to client-derived refs
+                if ((issueIds.length === 0 && cellRefs.length === 0)) {
+                    const group = groups.find(g => g.signature === signature);
+                    // Ensure we have issues to filter; if not, fetch the first page now
+                    let sourceIssues = issues;
+                    if (!Array.isArray(sourceIssues) || sourceIssues.length === 0) {
+                        try {
+                            const page = await axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, 0, 20000, true));
+                            const pageIssues = Array.isArray(page?.data?.issues) ? page.data.issues : [];
+                            if (pageIssues.length > 0) {
+                                setIssues(prev => (prev && prev.length ? prev : pageIssues));
+                                sourceIssues = pageIssues;
+                            }
+                        } catch (_) {
+                            // ignore and rely on whatever we have
+                        }
+                    }
+                    const derived = (sourceIssues || [])
+                        .filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value);
+                    issueIds = derived.map(i => i.id);
+                    cellRefs = derived.map(i => i.cellReference || `${i.column}${i.row}`);
+                }
+
                 setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds, cellRefs }));
             } catch (e) {
                 console.warn('Failed to load cell refs for group (fallback to client filter):', e);
                 // Fallback: derive cell refs from currently loaded issues
                 const group = groups.find(g => g.signature === signature);
-                const refs = issues
-                    .filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value)
-                    .map(i => i.cellReference || `${i.column}${i.row}`);
-                const ids = issues
-                    .filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value)
-                    .map(i => i.id);
+                let sourceIssues = issues;
+                if (!Array.isArray(sourceIssues) || sourceIssues.length === 0) {
+                    try {
+                        const page = await axios.get(API_ENDPOINTS.getIssuesPage(data.sessionId, 0, 20000, true));
+                        const pageIssues = Array.isArray(page?.data?.issues) ? page.data.issues : [];
+                        if (pageIssues.length > 0) {
+                            setIssues(prev => (prev && prev.length ? prev : pageIssues));
+                            sourceIssues = pageIssues;
+                        }
+                    } catch (_) {}
+                }
+                const filtered = (sourceIssues || []).filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value);
+                const refs = filtered.map(i => i.cellReference || `${i.column}${i.row}`);
+                const ids = filtered.map(i => i.id);
                 setGroupRefsCache(prev => new Map(prev).set(signature, { loaded: true, issueIds: ids, cellRefs: refs }));
             }
         }
