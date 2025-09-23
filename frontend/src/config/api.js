@@ -41,6 +41,10 @@ export const API_ENDPOINTS = {
         params.set('limit', String(limit));
         if (problemType) params.set('problemType', problemType);
         if (q) params.set('q', q);
+        // Optional category (level1): BD | IA | RIA | RR | ALL (future server support)
+        if (typeof arguments[0] === 'object' && arguments[0] && arguments[0].category) {
+            params.set('category', arguments[0].category);
+        }
         return `${API_BASE_URL}/api/learning/patterns?${params.toString()}`;
     },
     learningDeletePattern: (compositeId) => `${API_BASE_URL}/api/learning/patterns/${encodeURIComponent(compositeId)}`,

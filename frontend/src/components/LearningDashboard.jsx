@@ -16,10 +16,13 @@ const LearningDashboard = ({ lastFilename = '' }) => {
     const [patternLoading, setPatternLoading] = useState(false);
     const [searchQ, setSearchQ] = useState('');
     const [problemFilter, setProblemFilter] = useState('');
+    // Delete confirmation modal state
+    const [deleteModal, setDeleteModal] = useState({ visible: false, compositeId: '', category: '', canonical: '', categoriesAffectedCount: 1 });
 
     // Multi-level grid states
     const [gridLevel, setGridLevel] = useState('root'); // 'root' | 'bd' | 'ia' | 'ria' | 'rr'
     const [subCategory, setSubCategory] = useState(null); // e.g., 'Branches', 'Exam', etc.
+    const [aggregateView, setAggregateView] = useState(null); // 'ALL' | 'BD' | 'IA' | 'RIA' | 'RR' | null
 
     // Fetch learning statistics
     const fetchStats = async () => {
@@ -88,10 +91,10 @@ const LearningDashboard = ({ lastFilename = '' }) => {
         fetchInsights();
     }, []);
 
-    const fetchPatterns = async ({ offset = pageOffset, limit = pageSize, q = searchQ, problemType = problemFilter } = {}) => {
+    const fetchPatterns = async ({ offset = pageOffset, limit = pageSize, q = searchQ, problemType = problemFilter, category = aggregateView } = {}) => {
         try {
             setPatternLoading(true);
-            const url = API_ENDPOINTS.learningPatterns({ offset, limit, problemType, q });
+            const url = API_ENDPOINTS.learningPatterns({ offset, limit, problemType, q, category });
             const res = await fetch(url);
             if (!res.ok) throw new Error('Failed to fetch patterns');
             const data = await res.json();
@@ -178,9 +181,59 @@ const LearningDashboard = ({ lastFilename = '' }) => {
             String(p.suggestion || '').toLowerCase().includes(q) ||
             textOf(p).includes(q);
 
-        // Client-side fallback filter to ensure dropdown reflects Problem types even if server ignores it
-        return patterns.filter(p => byProblem(p) && bySearch(p));
-    }, [patterns, searchQ, problemFilter]);
+        // Category filter for aggregate views (client-side until server supports)
+        const byCategory = (p) => {
+            if (!aggregateView || aggregateView === 'ALL') return true;
+            const cat = String(p.category || p.level1 || '').toUpperCase();
+            return cat === aggregateView;
+        };
+
+        // Client-side de-duplication across sub-categories by stable key
+        const dedup = new Map();
+        for (const row of patterns) {
+            if (!byProblem(row) || !bySearch(row) || !byCategory(row)) continue;
+            const key = `${row.problemType}|${row.originalValue}|${row.suggestion}`;
+            if (!dedup.has(key)) dedup.set(key, row);
+        }
+        return Array.from(dedup.values());
+    }, [patterns, searchQ, problemFilter, aggregateView]);
+
+    // Open delete confirmation modal with cross-table context
+    const openDeleteModal = (row) => {
+        try {
+            const compositeId = `${row.source}:${row.pattern_id}`;
+            const canonical = `${row.problemType}|${row.originalValue}|${row.suggestion}`;
+            const category = String(row.category || row.level1 || gridLevel || '').toUpperCase();
+            const categories = new Set(
+                patterns
+                    .filter(p => `${p.problemType}|${p.originalValue}|${p.suggestion}` === canonical)
+                    .map(p => String(p.category || p.level1 || '').toUpperCase())
+            );
+            const count = Math.max(1, categories.size);
+            setDeleteModal({ visible: true, compositeId, category, canonical, categoriesAffectedCount: count });
+        } catch (_) {
+            setDeleteModal({ visible: true, compositeId: `${row.source}:${row.pattern_id}`, category: String(gridLevel || ''), canonical: '', categoriesAffectedCount: 1 });
+        }
+    };
+
+    const closeDeleteModal = () => setDeleteModal({ visible: false, compositeId: '', category: '', canonical: '', categoriesAffectedCount: 1 });
+
+    const confirmDelete = async (scope) => {
+        try {
+            setPatternLoading(true);
+            await fetch(API_ENDPOINTS.learningDeletePattern(deleteModal.compositeId), {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scope, category: deleteModal.category, canonical: deleteModal.canonical })
+            });
+            await fetchPatterns({ offset: 0 });
+        } catch (e) {
+            console.error('Delete failed', e);
+        } finally {
+            setPatternLoading(false);
+            closeDeleteModal();
+        }
+    };
 
     if (loading && !stats) {
         return (
@@ -260,10 +313,10 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                     </button>
                 </div>
 
-                {/* Problem Type Distribution */}
+                {/* Known Fixes */}
                 {stats && stats.problemBreakdown && stats.problemBreakdown.length > 0 && (
                     <div style={{ marginBottom: '2rem' }}>
-                        <h3>Problem Type Distribution</h3>
+                        <h3>Known Fixes</h3>
                         {/* Multi-level grid */}
                         {gridLevel === 'root' && (
                             <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
@@ -281,7 +334,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                             {labelForLevel1(t)}
                                         </button>
                                     ))}
-                                    <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2', fontSize: '1rem', textAlign: 'center' }}>
+                                    <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2', fontSize: '1rem', textAlign: 'center' }} onClick={() => { setAggregateView('ALL'); setGridLevel('root'); setSubCategory(null); fetchPatterns({ offset: 0, category: 'ALL' }); }}>
                                         See All Issues
                                     </button>
                                 </div>
@@ -312,22 +365,22 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     ))}
                                     {/* Extra CTA buttons by level */}
                                     {gridLevel === 'BD' && (
-                                        <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2' }}>
+                                        <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2' }} onClick={() => { setAggregateView('BD'); fetchPatterns({ offset: 0, category: 'BD' }); }}>
                                             See Issues From All BD Files
                                         </button>
                                     )}
                                     {gridLevel === 'RIA' && (
-                                        <button className="btn btn-secondary btn-tall">
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RIA'); fetchPatterns({ offset: 0, category: 'RIA' }); }}>
                                             See Issues From All RIA Files
                                         </button>
                                     )}
                                     {gridLevel === 'IA' && (
-                                        <button className="btn btn-secondary btn-tall">
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('IA'); fetchPatterns({ offset: 0, category: 'IA' }); }}>
                                             See Issues From All IA Files
                                         </button>
                                     )}
                                     {gridLevel === 'RR' && (
-                                        <button className="btn btn-secondary btn-tall">
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RR'); fetchPatterns({ offset: 0, category: 'RR' }); }}>
                                             See Issues From All RR Files
                                         </button>
                                     )}
@@ -335,13 +388,13 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                             </div>
                         )}
 
-                        {gridLevel !== 'root' && subCategory != null && (
+                        {(gridLevel !== 'root' && subCategory != null) || aggregateView ? (
                             <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '1rem', width: '955px', margin: '0 auto' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                                    <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{labelForLevel1(gridLevel)} • {subCategory}</div>
+                                    <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{aggregateView ? (aggregateView === 'ALL' ? 'All Issues' : `${labelForLevel1(aggregateView)} • All Files`) : `${labelForLevel1(gridLevel)} • ${subCategory}`}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                        <button className="btn btn-secondary" title={`Download These ${gridLevel} Issues`} onClick={exportData}>⬇️ Download These {gridLevel} Issues</button>
-                                        <button className="btn btn-link" onClick={() => setSubCategory(null)}>← Back</button>
+                                        <button className="btn btn-secondary" title={`Download These ${aggregateView || gridLevel} Issues`} onClick={exportData}>⬇️ Download These {aggregateView || gridLevel} Issues</button>
+                                        <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); }}>← Back</button>
                                     </div>
                                 </div>
                                 {/* Search and filter */}
@@ -382,15 +435,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                                     <td style={{ padding: '0.5rem' }}>{p.suggestion}</td>
                                                     <td style={{ padding: '0.5rem', textAlign: 'right' }}>{p.usageCount || 0}</td>
                                                     <td style={{ padding: '0.5rem' }}>
-                                                        <button className="btn btn-warning btn-sm" onClick={async () => {
-                                                            const compositeId = `${p.source}:${p.pattern_id}`;
-                                                            if (!confirm(`Delete pattern ${compositeId}?`)) return;
-                                                            try {
-                                                                const resp = await fetch(API_ENDPOINTS.learningDeletePattern(compositeId), { method: 'DELETE' });
-                                                                const j = await resp.json();
-                                                                if (j && j.success) fetchPatterns({ offset: pageOffset });
-                                                            } catch (e) { console.error('Delete failed', e); }
-                                                        }}>Delete</button>
+                                                        <button className="btn btn-warning btn-sm" onClick={() => openDeleteModal(p)}>Delete</button>
                                                     </td>
                                                 </tr>
                                             ))}
@@ -406,7 +451,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     </div>
                                 </div>
                             </div>
-                        )}
+                        ) : null}
                     </div>
                 )}
 
@@ -622,8 +667,33 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                     </p>
                 </div>
             </div>
+
+            {/* Delete Confirmation Modal */}
+            {deleteModal.visible && (
+                <div className="modal-overlay">
+                    <div className="modal-content bulk-override-modal">
+                        <div className="modal-header" style={{ position: 'relative' }}>
+                            <button
+                                onClick={closeDeleteModal}
+                                aria-label="Close"
+                                className="modal-close"
+                                style={{ position: 'absolute', right: '12px', top: '10px', background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', zIndex: 10 }}
+                                disabled={patternLoading}
+                            >×</button>
+                            <h3>Delete Known Fix?</h3>
+                            <p style={{ color: '#4a5568' }}>
+                                This rule appears in {deleteModal.categoriesAffectedCount} categor{deleteModal.categoriesAffectedCount === 1 ? 'y' : 'ies'}. Do you want to delete it only here{deleteModal.category ? ` (in ${deleteModal.category})` : ''} or across all categories?
+                            </p>
+                        </div>
+                        <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                            <button className="btn btn-secondary" onClick={() => confirmDelete('category')} disabled={patternLoading}>Delete Only Here</button>
+                            <button className="btn btn-primary" onClick={() => confirmDelete('global')} disabled={patternLoading}>Delete Across All</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
-export default LearningDashboard; 
+export default LearningDashboard;
