@@ -142,14 +142,42 @@ const ReportDisplay = ({ data, onReset }) => {
                 if (!data.sessionId) return;
                 const resp = await axios.get(API_ENDPOINTS.getIssuesGrouped(data.sessionId, 0, undefined, true));
                 const arr = Array.isArray(resp?.data?.groups) ? resp.data.groups : [];
-                setGroups(arr);
-                setGroupsOffset(arr.length);
-                if (typeof resp?.data?.totalGroups === 'number') setTotalGroups(resp.data.totalGroups);
-                if (typeof resp?.data?.totalIssues === 'number') setTotalGroupIssues(resp.data.totalIssues);
+                if (arr.length === 0) {
+                    // Local fallback from preview issues to keep analyzer visible
+                    const map = new Map();
+                    for (const it of (issues || [])) {
+                        if (it.fixed) continue;
+                        const errorType = it.hasInvalidChars ? 'invalid_characters' : (it.hasLengthIssues ? 'length_violation' : 'unknown');
+                        const signature = `v1|column=${it.column}|type=${errorType}|value=${btoa(unescape(encodeURIComponent(it.originalValue || '')))}`;
+                        if (!map.has(signature)) map.set(signature, { signature, column: it.column, errorType, value: it.originalValue, count: 0, affectedCellCount: 0, sampleIssue: it });
+                        const g = map.get(signature); g.count += 1; g.affectedCellCount = g.count;
+                    }
+                    const localGroups = Array.from(map.values());
+                    setGroups(localGroups);
+                    setGroupsOffset(localGroups.length);
+                    setTotalGroups(localGroups.length);
+                    setTotalGroupIssues((issues || []).filter(i => !i.fixed).length);
+                } else {
+                    setGroups(arr);
+                    setGroupsOffset(arr.length);
+                    if (typeof resp?.data?.totalGroups === 'number') setTotalGroups(resp.data.totalGroups);
+                    if (typeof resp?.data?.totalIssues === 'number') setTotalGroupIssues(resp.data.totalIssues);
+                }
             } catch (e) {
-                console.warn('Failed to load grouped issues:', e);
-                setGroups([]);
-                setGroupsOffset(0);
+                console.warn('Failed to load grouped issues (using local fallback):', e);
+                const map = new Map();
+                for (const it of (issues || [])) {
+                    if (it.fixed) continue;
+                    const errorType = it.hasInvalidChars ? 'invalid_characters' : (it.hasLengthIssues ? 'length_violation' : 'unknown');
+                    const signature = `v1|column=${it.column}|type=${errorType}|value=${btoa(unescape(encodeURIComponent(it.originalValue || '')))}`;
+                    if (!map.has(signature)) map.set(signature, { signature, column: it.column, errorType, value: it.originalValue, count: 0, affectedCellCount: 0, sampleIssue: it });
+                    const g = map.get(signature); g.count += 1; g.affectedCellCount = g.count;
+                }
+                const localGroups = Array.from(map.values());
+                setGroups(localGroups);
+                setGroupsOffset(localGroups.length);
+                setTotalGroups(localGroups.length);
+                setTotalGroupIssues((issues || []).filter(i => !i.fixed).length);
             }
         };
         loadGroups();
@@ -201,7 +229,7 @@ const ReportDisplay = ({ data, onReset }) => {
                 // If server returned nothing (likely different instance), fallback to client-derived refs
                 if ((issueIds.length === 0 && cellRefs.length === 0)) {
                     // Opportunistic warm-up: try to touch the session endpoint first to pin the instance
-                    try { await axios.get(API_ENDPOINTS.getSessionInfo(data.sessionId)); } catch (_) {}
+                    try { await axios.get(API_ENDPOINTS.getSessionInfo(data.sessionId)); } catch (_) { }
                     const group = groups.find(g => g.signature === signature);
                     // Ensure we have issues to filter; if not, fetch the first page now
                     let sourceIssues = issues;
@@ -237,7 +265,7 @@ const ReportDisplay = ({ data, onReset }) => {
                             setIssues(prev => (prev && prev.length ? prev : pageIssues));
                             sourceIssues = pageIssues;
                         }
-                    } catch (_) {}
+                    } catch (_) { }
                 }
                 const filtered = (sourceIssues || []).filter(i => !i.fixed && i.column === group?.column && i.originalValue === group?.value);
                 const refs = filtered.map(i => i.cellReference || `${i.column}${i.row}`);
