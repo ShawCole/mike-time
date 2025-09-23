@@ -25,6 +25,8 @@ const ReportDisplay = ({ data, onReset }) => {
     const [editingChangeId, setEditingChangeId] = useState(null); // Track which change is being edited
     const [overriddenChanges, setOverriddenChanges] = useState({}); // Track overridden changes by issue ID
     const [expandedChangeGroups, setExpandedChangeGroups] = useState(new Set());
+    const [groupChangeOverriddenFixes, setGroupChangeOverriddenFixes] = useState({}); // key -> overridden value
+    const [groupChangeEditingKey, setGroupChangeEditingKey] = useState(null);
 
     // Bulk override modal state
     const [showBulkOverrideModal, setShowBulkOverrideModal] = useState(false);
@@ -588,12 +590,14 @@ const ReportDisplay = ({ data, onReset }) => {
                         value: ch.originalValue,
                         count: 0,
                         sampleChange: ch,
-                        cellRefs: []
+                        cellRefs: [],
+                        issueIds: []
                     });
                 }
                 const g = groups.get(key);
                 g.count += 1;
                 g.cellRefs.push(ch.cellReference || `${ch.column}${ch.row}`);
+                g.issueIds.push(ch.id);
             }
             let arr = Array.from(groups.values());
             if (searchTerm) {
@@ -1124,12 +1128,58 @@ const ReportDisplay = ({ data, onReset }) => {
                                                     <div className="change-arrow">→</div>
                                                     <div className="change-after">
                                                         <label>Fixed:</label>
-                                                        <div className="value-display fixed-value">{item.sampleChange?.suggestedFix}</div>
+                                                        <div
+                                                            className={`value-display fixed-value ${groupChangeEditingKey === item.key ? '' : 'hoverable'}`}
+                                                            onClick={() => setGroupChangeEditingKey(item.key)}
+                                                        >
+                                                            {groupChangeEditingKey === item.key ? (
+                                                                <input
+                                                                    type="text"
+                                                                    value={typeof groupChangeOverriddenFixes[item.key] === 'string' ? groupChangeOverriddenFixes[item.key] : (item.sampleChange?.suggestedFix || '')}
+                                                                    onChange={(e) => setGroupChangeOverriddenFixes(prev => ({ ...prev, [item.key]: e.target.value }))}
+                                                                    onBlur={() => setGroupChangeEditingKey(null)}
+                                                                    onKeyPress={(e) => { if (e.key === 'Enter') setGroupChangeEditingKey(null); }}
+                                                                    autoFocus
+                                                                    className="edit-fix-input"
+                                                                />
+                                                            ) : (
+                                                                (typeof groupChangeOverriddenFixes[item.key] === 'string' ? groupChangeOverriddenFixes[item.key] : (item.sampleChange?.suggestedFix || ''))
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 {item.sampleChange?.problem && (
                                                     <div style={{ marginTop: '1rem', fontSize: '0.875rem', color: '#718096' }}>
                                                         <strong>Issue:</strong> {item.sampleChange.problem}
+                                                    </div>
+                                                )}
+
+                                                {(groupChangeEditingKey === item.key || (typeof groupChangeOverriddenFixes[item.key] === 'string' && groupChangeOverriddenFixes[item.key] !== (item.sampleChange?.suggestedFix || ''))) && (
+                                                    <div className="actions-and-warning-container">
+                                                        <div className="override-actions">
+                                                            <button
+                                                                className="btn btn-warning override-button"
+                                                                onClick={async () => {
+                                                                    try {
+                                                                        const overriddenFix = typeof groupChangeOverriddenFixes[item.key] === 'string' ? groupChangeOverriddenFixes[item.key] : (item.sampleChange?.suggestedFix || '');
+                                                                        if (!overriddenFix) return;
+                                                                        await axios.post(API_ENDPOINTS.overrideIssuesBulk, {
+                                                                            sessionId: data.sessionId,
+                                                                            issueIds: item.issueIds,
+                                                                            overriddenFix
+                                                                        });
+                                                                        // Update local state
+                                                                        setChanges(prev => prev.map(ch => item.issueIds.includes(ch.id) ? { ...ch, suggestedFix: overriddenFix, fixedAt: new Date().toISOString() } : ch));
+                                                                        setGroupChangeEditingKey(null);
+                                                                    } catch (e) {
+                                                                        console.error('Group override failed:', e);
+                                                                        alert('Failed to apply override to this group.');
+                                                                    }
+                                                                }}
+                                                            >
+                                                                ⚠️ Override
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>
