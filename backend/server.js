@@ -2723,7 +2723,7 @@ app.get('/api/learning/patterns', (req, res) => {
         let unionQuery = `
             SELECT id as pattern_id, 'char_map' as source, 'invalid_characters' as problemType, NULL as columnName,
                    from_char as originalValue, to_char as suggestion, usage_count as usageCount,
-                   created_at as createdAt, last_seen as updatedAt
+                   NULL as createdAt, last_seen as updatedAt
             FROM character_mappings
         `;
 
@@ -2805,9 +2805,9 @@ app.delete('/api/learning/patterns/:compositeId', (req, res) => {
         };
 
         if (source === 'override') {
-            db.run(`DELETE FROM override_patterns WHERE id = ?`, [patternId], function(err){ handleResponse(err, this); });
+            db.run(`DELETE FROM override_patterns WHERE id = ?`, [patternId], function (err) { handleResponse(err, this); });
         } else if (source === 'char_map') {
-            db.run(`DELETE FROM character_mappings WHERE id = ?`, [patternId], function(err){ handleResponse(err, this); });
+            db.run(`DELETE FROM character_mappings WHERE id = ?`, [patternId], function (err) { handleResponse(err, this); });
         } else {
             return res.status(400).json({ error: 'Unknown pattern source' });
         }
