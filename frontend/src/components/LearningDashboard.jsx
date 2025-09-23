@@ -139,11 +139,34 @@ const LearningDashboard = ({ lastFilename = '' }) => {
     // Simple client-side filter for demo purposes; later we can add server-side fileType param
     const filteredPatterns = useMemo(() => {
         const q = (searchQ || '').toLowerCase();
-        const byProblem = (p) => !problemFilter || (p.problemType === problemFilter);
+        const textOf = (p) => [
+            p.problem,
+            p.problemText,
+            p.description,
+            p.problem_type,
+            p.problemType
+        ].map(v => String(v || '').toLowerCase()).join(' \n ');
+
+        const byProblem = (p) => {
+            if (!problemFilter) return true;
+            const pt = String(p.problemType || '').toLowerCase();
+            if (problemFilter === 'invalid_characters') {
+                const txt = textOf(p);
+                return pt === 'invalid_characters' || txt.includes('invalid characters');
+            }
+            if (problemFilter === 'length_violation') {
+                const txt = textOf(p);
+                return pt === 'length_violation' || txt.includes('length');
+            }
+            return pt === problemFilter;
+        };
+
         const bySearch = (p) => !q ||
             String(p.problemType || '').toLowerCase().includes(q) ||
             String(p.originalValue || '').toLowerCase().includes(q) ||
-            String(p.suggestion || '').toLowerCase().includes(q);
+            String(p.suggestion || '').toLowerCase().includes(q) ||
+            textOf(p).includes(q);
+
         // Client-side fallback filter to ensure dropdown reflects Problem types even if server ignores it
         return patterns.filter(p => byProblem(p) && bySearch(p));
     }, [patterns, searchQ, problemFilter]);
@@ -232,7 +255,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         <h3>Problem Type Distribution</h3>
                         {/* Multi-level grid */}
                         {gridLevel === 'root' && (
-                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
                                 {/* Header inside the container, just below the top border */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 'bold' }}>All Issues</div>
@@ -252,7 +275,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         )}
 
                         {gridLevel !== 'root' && subCategory == null && (
-                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6' }}>
+                            <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
                                 {/* Top header row to match level-2 layout */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 'bold' }}>{gridLevel}</div>
@@ -278,7 +301,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                         )}
 
                         {gridLevel !== 'root' && subCategory != null && (
-                            <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '1rem' }}>
+                            <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '1rem', width: '955px', margin: '0 auto' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 'bold' }}>{gridLevel} • {subCategory}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
