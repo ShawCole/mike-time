@@ -1290,22 +1290,15 @@ const processFileFromStorage = async (filename, progressId) => {
                 if (rowCount % 10000 === 0) {
                     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
                     console.log(`Processed ${rowCount} rows, found ${issues.length} issues so far. Memory usage: ${memoryUsage}MB`);
-                    if (progressId && metadata.size) {
-                        if (bytesRead > 0 && rowCount > 0) {
-                            const inst = bytesRead / Math.max(1, rowCount);
-                            emaBytesPerRow = emaBytesPerRow == null ? inst : (alpha * inst + (1 - alpha) * emaBytesPerRow);
-                            const estTotalRows = Math.max(rowCount, Math.floor(metadata.size / Math.max(1, emaBytesPerRow)));
-                            const pct = Math.max(5, Math.min(98, Math.floor((rowCount / Math.max(1, estTotalRows)) * 93) + 5));
-                            const now = Date.now();
-                            const rowsDelta = rowCount - lastUpdateRows;
-                            const timeDeltaSec = Math.max(0.001, (now - lastUpdateTime) / 1000);
-                            const rowsPerSec = rowsDelta > 0 ? Math.round(rowsDelta / timeDeltaSec) : 0;
-                            lastUpdateRows = rowCount;
-                            lastUpdateTime = now;
-                            updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} of ~${estTotalRows.toLocaleString()} rows so far`, { rowsProcessed: rowCount, estimatedTotalRows: estTotalRows, rowsPerSecond: rowsPerSec });
-                        } else {
-                            updateProgress(progressId, 5, `Processing stream... ${rowCount.toLocaleString()} rows so far`, { rowsProcessed: rowCount });
-                        }
+                    if (progressId) {
+                        const now = Date.now();
+                        const rowsDelta = rowCount - lastUpdateRows;
+                        const timeDeltaSec = Math.max(0.001, (now - lastUpdateTime) / 1000);
+                        const rowsPerSec = rowsDelta > 0 ? Math.round(rowsDelta / timeDeltaSec) : 0;
+                        lastUpdateRows = rowCount;
+                        lastUpdateTime = now;
+                        const pct = Math.max(5, Math.min(98, Math.floor((rowCount / Math.max(1, estimatedTotalRows)) * 93) + 5));
+                        updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} of ~${estimatedTotalRows.toLocaleString()} rows so far`, { rowsProcessed: rowCount, estimatedTotalRows, rowsPerSecond: rowsPerSec });
                     }
 
                     // Force garbage collection if available
