@@ -23,6 +23,16 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
     const creepTimerRef = useRef(null);
     const stopCreep = () => { if (creepTimerRef.current) { clearInterval(creepTimerRef.current); creepTimerRef.current = null; } };
 
+    // When processing/analyzing, follow externally polled percent/log from App
+    useEffect(() => {
+        if ((currentStage === 'processing' || currentStage === 'analyzing') && typeof externalPercent === 'number') {
+            const next = Math.max(5, Math.min(99, Math.round(externalPercent)));
+            if (next !== displayPercent) {
+                setDisplayPercent(next);
+            }
+        }
+    }, [externalPercent, currentStage]);
+
     const uploadFile = async (file) => {
         try {
             // Defer progress start to the specific upload path to avoid multiple progress sessions
