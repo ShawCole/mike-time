@@ -181,11 +181,14 @@ const LearningDashboard = ({ lastFilename = '' }) => {
             String(p.suggestion || '').toLowerCase().includes(q) ||
             textOf(p).includes(q);
 
-        // Category filter for aggregate views (client-side until server supports)
+        // Category filter: skip when aggregateView is active or when records carry no category info
+        const hasCategoryInfo = patterns.some(r => r.level1 || r.category);
         const byCategory = (p) => {
-            if (!aggregateView || aggregateView === 'ALL') return true;
+            if (aggregateView) return true; // server-side already filtered for aggregates
+            if (!hasCategoryInfo) return true; // data has no category field, don't filter client-side
             const cat = String(p.category || p.level1 || '').toUpperCase();
-            return cat === aggregateView;
+            if (!gridLevel || gridLevel === 'root') return true;
+            return cat === String(gridLevel).toUpperCase();
         };
         const byLevel2 = (p) => {
             if (!subCategory) return true;
@@ -324,7 +327,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                     <div style={{ marginBottom: '2rem' }}>
                         <h3>Known Fixes</h3>
                         {/* Multi-level grid */}
-                        {gridLevel === 'root' && (
+                        {gridLevel === 'root' && !aggregateView && (
                             <div style={{ backgroundColor: '#f8f9fa', padding: '1rem', borderRadius: '8px', border: '1px solid #dee2e6', width: '955px', margin: '0 auto' }}>
                                 {/* Header inside the container, just below the top border */}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -340,7 +343,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                             {labelForLevel1(t)}
                                         </button>
                                     ))}
-                                    <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2', fontSize: '1rem', textAlign: 'center' }} onClick={() => { setAggregateView('ALL'); setGridLevel('root'); setSubCategory(null); fetchPatterns({ offset: 0, category: 'ALL' }); }}>
+                                    <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2', fontSize: '1rem', textAlign: 'center' }} onClick={() => { setAggregateView('ALL'); setSubCategory('ALL_FILES'); fetchPatterns({ offset: 0, category: 'ALL', level2: undefined }); }}>
                                         See All Issues
                                     </button>
                                 </div>
@@ -371,22 +374,22 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     ))}
                                     {/* Extra CTA buttons by level */}
                                     {gridLevel === 'BD' && (
-                                        <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2' }} onClick={() => { setAggregateView('BD'); fetchPatterns({ offset: 0, category: 'BD' }); }}>
+                                        <button className="btn btn-secondary btn-tall" style={{ gridColumn: '1 / span 2' }} onClick={() => { setAggregateView('BD'); setSubCategory('ALL_FILES'); fetchPatterns({ offset: 0, category: 'BD', level2: undefined }); }}>
                                             See Issues From All BD Files
                                         </button>
                                     )}
                                     {gridLevel === 'RIA' && (
-                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RIA'); fetchPatterns({ offset: 0, category: 'RIA' }); }}>
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RIA'); setSubCategory('ALL_FILES'); fetchPatterns({ offset: 0, category: 'RIA', level2: undefined }); }}>
                                             See Issues From All RIA Files
                                         </button>
                                     )}
                                     {gridLevel === 'IA' && (
-                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('IA'); fetchPatterns({ offset: 0, category: 'IA' }); }}>
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('IA'); setSubCategory('ALL_FILES'); fetchPatterns({ offset: 0, category: 'IA', level2: undefined }); }}>
                                             See Issues From All IA Files
                                         </button>
                                     )}
                                     {gridLevel === 'RR' && (
-                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RR'); fetchPatterns({ offset: 0, category: 'RR' }); }}>
+                                        <button className="btn btn-secondary btn-tall" onClick={() => { setAggregateView('RR'); setSubCategory('ALL_FILES'); fetchPatterns({ offset: 0, category: 'RR', level2: undefined }); }}>
                                             See Issues From All RR Files
                                         </button>
                                     )}
@@ -400,7 +403,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                     <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{aggregateView ? (aggregateView === 'ALL' ? 'All Issues' : `${labelForLevel1(aggregateView)} • All Files`) : `${labelForLevel1(gridLevel)} • ${subCategory}`}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button className="btn btn-secondary" title={`Download These ${aggregateView || gridLevel} Issues`} onClick={exportData}>⬇️ Download These {aggregateView || gridLevel} Issues</button>
-                                        <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); fetchPatterns({ offset: 0, category: gridLevel }); }}>← Back</button>
+                                        <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); fetchPatterns({ offset: 0, category: gridLevel !== 'root' ? gridLevel : undefined }); }}>← Back</button>
                                     </div>
                                 </div>
                                 {/* Search and filter */}
