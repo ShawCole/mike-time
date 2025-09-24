@@ -150,6 +150,21 @@ const LearningDashboard = ({ lastFilename = '' }) => {
         }
     };
 
+    // Compute the download button label based on current view
+    const downloadLabel = useMemo(() => {
+        if (aggregateView === 'ALL') return 'Download All Issues';
+        if (aggregateView && ['BD', 'IA', 'RIA', 'RR'].includes(aggregateView)) {
+            return `Download All ${aggregateView} Issues`;
+        }
+        if (gridLevel !== 'root' && subCategory != null) {
+            return `Download These ${gridLevel} Issues`;
+        }
+        if (gridLevel !== 'root' && subCategory == null) {
+            return `Download All ${gridLevel} Issues`;
+        }
+        return 'Download All Issues';
+    }, [aggregateView, gridLevel, subCategory]);
+
     // Simple client-side filter for demo purposes; later we can add server-side fileType param
     const filteredPatterns = useMemo(() => {
         const q = (searchQ || '').toLowerCase();
@@ -402,7 +417,7 @@ const LearningDashboard = ({ lastFilename = '' }) => {
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                                     <div style={{ fontWeight: 'bold', fontSize: '1.25rem' }}>{aggregateView ? (aggregateView === 'ALL' ? 'All Issues' : `${labelForLevel1(aggregateView)} • All Files`) : `${labelForLevel1(gridLevel)} • ${subCategory}`}</div>
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                        <button className="btn btn-secondary" title={`Download These ${aggregateView || gridLevel} Issues`} onClick={exportData}>⬇️ Download These {aggregateView || gridLevel} Issues</button>
+                                        <button className="btn btn-secondary" title={downloadLabel} onClick={exportData}>⬇️ {downloadLabel}</button>
                                         <button className="btn btn-link" onClick={() => { setAggregateView(null); setSubCategory(null); fetchPatterns({ offset: 0, category: gridLevel !== 'root' ? gridLevel : undefined }); }}>← Back</button>
                                     </div>
                                 </div>
