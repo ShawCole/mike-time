@@ -260,37 +260,7 @@ function App() {
           <LearningDashboard lastFilename={reportData?.filename || ''} />
         )}
 
-        {/* Floating Upload Overlay (driven from FileUpload callbacks or isLoading fallback) */}
-        {(uploadOverlay.visible || isLoading) && !reportData && (
-          <div style={{ position: 'fixed', inset: 0, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(0,0,0,0.06)', zIndex: 1000 }}>
-            <div className="progress-container" style={{ width: 'min(880px, 92vw)', maxWidth: '880px' }}>
-              <div className="progress-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ minWidth: 0 }}>
-                  {uploadOverlay.file && (
-                    <div style={{ color: '#2d3748', fontWeight: 600 }}>
-                      <span>📤 Uploading: </span>
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-block', verticalAlign: 'bottom', maxWidth: '48ch' }} title={uploadOverlay.file.name}>
-                        {uploadOverlay.file.name}
-                      </span>
-                      <span> ({(uploadOverlay.file.size / (1024 * 1024)).toFixed(2)} MB)</span>
-                    </div>
-                  )}
-                  <div style={{ color: '#4a5568', marginTop: '0.25rem' }}>{uploadOverlay.log || currentLogLine || 'Starting…'}</div>
-                </div>
-                <span className="progress-percentage" style={{ marginLeft: '1rem' }}>{Math.round(uploadOverlay.percent || progressPercentage || 1)}%</span>
-              </div>
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${Math.round(uploadOverlay.percent || progressPercentage || 1)}%`, transition: 'width 0.3s ease' }} />
-              </div>
-              <div className="progress-steps">
-                <div className={`progress-step ${uploadOverlay.stage === 'preparing' ? 'active' : ['uploading', 'processing', 'analyzing'].includes(uploadOverlay.stage) ? 'completed' : ''}`}><span className="step-icon">🚀</span><span className="step-label">Prepare</span></div>
-                <div className={`progress-step ${uploadOverlay.stage === 'uploading' || isLoading ? 'active' : uploadOverlay.stage && uploadOverlay.stage !== 'preparing' ? 'completed' : ''}`}><span className="step-icon">📤</span><span className="step-label">Upload</span></div>
-                <div className={`progress-step ${uploadOverlay.stage === 'processing' ? 'active' : uploadOverlay.stage === 'analyzing' ? 'completed' : ''}`}><span className="step-icon">⚡</span><span className="step-label">Process</span></div>
-                <div className={`progress-step ${uploadOverlay.stage === 'analyzing' ? 'active' : ''}`}><span className="step-icon">🔍</span><span className="step-label">Analyze</span></div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Upload overlay is rendered inside FileUpload to avoid duplicate layers */}
       </main>
 
       <footer className="app-footer">

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import { API_ENDPOINTS } from '../config/api';
@@ -7,6 +7,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
     const [selectedFile, setSelectedFile] = useState(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
+    const [displayPercent, setDisplayPercent] = useState(0); // smoothed percent for UI
     const [currentStage, setCurrentStage] = useState(''); // 'uploading', 'processing', 'analyzing'
     const [allowDiacritics, setAllowDiacritics] = useState(() => {
         try {
@@ -19,12 +20,34 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
     });
     const [uploadLog, setUploadLog] = useState('Initializing file upload...');
     const [lastTick, setLastTick] = useState({ t: 0, loaded: 0 });
+    const creepTimerRef = useRef(null);
+
+    const stopCreep = () => {
+        if (creepTimerRef.current) {
+            clearInterval(creepTimerRef.current);
+            creepTimerRef.current = null;
+        }
+    };
+
+    const startCreepTo = (target = 99, step = 0.25, intervalMs = 400) => {
+        stopCreep();
+        creepTimerRef.current = setInterval(() => {
+            setDisplayPercent((prev) => {
+                if (prev >= target) {
+                    stopCreep();
+                    return prev;
+                }
+                return Math.min(target, prev + step);
+            });
+        }, intervalMs);
+    };
 
     const uploadFile = async (file) => {
         try {
             // Defer progress start to the specific upload path to avoid multiple progress sessions
             setUploadProgress(0);
             setProcessingProgress(0);
+            setDisplayPercent(0);
 
             const fileSizeMB = file.size / (1024 * 1024);
             console.log(`File size: ${fileSizeMB.toFixed(2)}MB`);
@@ -49,6 +72,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             onLoadingChange(false);
             setUploadProgress(0);
             setProcessingProgress(0);
+            stopCreep();
             setCurrentStage('');
         }
     };
@@ -88,6 +112,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                         (progressEvent.loaded * 100) / progressEvent.total
                     );
                     setUploadProgress(percentCompleted);
+                    setDisplayPercent((prev) => Math.max(prev, percentCompleted));
 
                     // Live log with instantaneous rate
                     const now = Date.now();
@@ -110,7 +135,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             setCurrentStage('processing');
             setUploadProgress(100);
             setProcessingProgress(10);
-            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 10, log: 'Streaming to server and processing…' });
+            setDisplayPercent((prev) => Math.max(prev, 95));
+            startCreepTo(99, 0.25, 450);
+            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 95, log: 'Streaming to server and processing…' });
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
@@ -120,6 +147,8 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             }, { timeout: 3600000 });
 
             setProcessingProgress(100);
+            setDisplayPercent(100);
+            stopCreep();
 
             // Normalize response (ensure issueCount present for UI)
             const normalized = {
@@ -178,6 +207,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                     (progressEvent.loaded * 100) / progressEvent.total
                 );
                 setUploadProgress(percentCompleted);
+                setDisplayPercent((prev) => Math.max(prev, percentCompleted));
 
                 // Live upload log + speed
                 const now = Date.now();
@@ -197,13 +227,17 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                 if (percentCompleted === 100) {
                     setCurrentStage('processing');
                     setProcessingProgress(10);
-                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 10, log: 'Streaming to server and processing…' });
+                    setDisplayPercent((prev) => Math.max(prev, 95));
+                    startCreepTo(99, 0.25, 450);
+                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 95, log: 'Streaming to server and processing…' });
                 }
             }
         });
 
         setCurrentStage('analyzing');
         setProcessingProgress(100);
+        setDisplayPercent(100);
+        stopCreep();
         if (onProgressUpdate) onProgressUpdate({ stage: 'analyzing', percent: 100, log: 'Analyzing quality issues…' });
 
         // Normalize response (ensure issueCount present for UI)
@@ -344,7 +378,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                                 </div>
                             </div>
                             <span className="progress-percentage" style={{ marginLeft: '1rem' }}>
-                                {currentStage === 'uploading' ? `${uploadProgress}%` : `${processingProgress}%`}
+                                {`${Math.round(displayPercent)}%`}
                             </span>
                         </div>
 
@@ -352,7 +386,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                             <div
                                 className="progress-fill"
                                 style={{
-                                    width: `${currentStage === 'uploading' ? uploadProgress : processingProgress}%`,
+                                    width: `${Math.round(displayPercent)}%`,
                                     transition: 'width 0.3s ease'
                                 }}
                             />
