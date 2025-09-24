@@ -135,9 +135,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             setCurrentStage('processing');
             setUploadProgress(100);
             setProcessingProgress(10);
-            setDisplayPercent((prev) => Math.max(prev, 95));
-            startCreepTo(99, 0.25, 450);
-            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 95, log: 'Streaming to server and processing…' });
+            setDisplayPercent((prev) => Math.max(prev, 91));
+            startCreepTo(99, 0.2, 600);
+            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 91, log: 'Streaming to server and processing…' });
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
@@ -227,9 +227,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                 if (percentCompleted === 100) {
                     setCurrentStage('processing');
                     setProcessingProgress(10);
-                    setDisplayPercent((prev) => Math.max(prev, 95));
-                    startCreepTo(99, 0.25, 450);
-                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 95, log: 'Streaming to server and processing…' });
+                    setDisplayPercent((prev) => Math.max(prev, 91));
+                    startCreepTo(99, 0.2, 600);
+                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 91, log: 'Streaming to server and processing…' });
                 }
             }
         });
