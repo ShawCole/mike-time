@@ -232,7 +232,12 @@ function App() {
                 onError={handleError}
                 onLoadingChange={handleLoadingState}
                 onStart={(file) => setUploadOverlay({ visible: true, file, stage: 'uploading', percent: 0, log: 'Starting…' })}
-                onProgressUpdate={({ stage, percent, log }) => setUploadOverlay((prev) => ({ ...prev, stage, percent, log }))}
+                onProgressUpdate={({ stage, percent, log }) => {
+                  // When backend processing starts, reset visual percent to 5%
+                  setUploadOverlay((prev) => ({ ...prev, stage, percent: stage === 'processing' ? 5 : percent, log }));
+                }}
+                externalPercent={progressPercentage}
+                externalLog={currentLogLine}
                 renderOverlayExternally={false}
               />
             )}

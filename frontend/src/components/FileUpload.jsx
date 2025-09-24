@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import { API_ENDPOINTS } from '../config/api';
 
-const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpdate, renderOverlayExternally = true }) => {
+const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpdate, renderOverlayExternally = true, externalPercent, externalLog }) => {
     const [selectedFile, setSelectedFile] = useState(null);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
@@ -21,26 +21,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
     const [uploadLog, setUploadLog] = useState('Initializing file upload...');
     const [lastTick, setLastTick] = useState({ t: 0, loaded: 0 });
     const creepTimerRef = useRef(null);
-
-    const stopCreep = () => {
-        if (creepTimerRef.current) {
-            clearInterval(creepTimerRef.current);
-            creepTimerRef.current = null;
-        }
-    };
-
-    const startCreepTo = (target = 99, step = 0.25, intervalMs = 400) => {
-        stopCreep();
-        creepTimerRef.current = setInterval(() => {
-            setDisplayPercent((prev) => {
-                if (prev >= target) {
-                    stopCreep();
-                    return prev;
-                }
-                return Math.min(target, prev + step);
-            });
-        }, intervalMs);
-    };
+    const stopCreep = () => { if (creepTimerRef.current) { clearInterval(creepTimerRef.current); creepTimerRef.current = null; } };
 
     const uploadFile = async (file) => {
         try {
@@ -72,7 +53,6 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             onLoadingChange(false);
             setUploadProgress(0);
             setProcessingProgress(0);
-            stopCreep();
             setCurrentStage('');
         }
     };
@@ -134,10 +114,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
             // Step 3: Process from Cloud Storage (streaming)
             setCurrentStage('processing');
             setUploadProgress(100);
-            setProcessingProgress(10);
-            setDisplayPercent((prev) => Math.max(prev, 91));
-            startCreepTo(99, 0.2, 600);
-            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 91, log: 'Streaming to server and processing…' });
+            setProcessingProgress(5);
+            setDisplayPercent(5);
+            if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 5, log: 'Streaming to server and processing…' });
 
             const response = await axios.post(API_ENDPOINTS.processFromStorage, {
                 filename: filename,
@@ -226,10 +205,9 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
 
                 if (percentCompleted === 100) {
                     setCurrentStage('processing');
-                    setProcessingProgress(10);
-                    setDisplayPercent((prev) => Math.max(prev, 91));
-                    startCreepTo(99, 0.2, 600);
-                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 91, log: 'Streaming to server and processing…' });
+                    setProcessingProgress(5);
+                    setDisplayPercent(5);
+                    if (onProgressUpdate) onProgressUpdate({ stage: 'processing', percent: 5, log: 'Streaming to server and processing…' });
                 }
             }
         });
@@ -373,8 +351,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                                 <div style={{ color: '#4a5568', marginTop: '0.25rem' }}>
                                     {currentStage === 'preparing' && 'Preparing high-performance upload…'}
                                     {currentStage === 'uploading' && uploadLog}
-                                    {currentStage === 'processing' && 'Streaming to server and processing…'}
-                                    {currentStage === 'analyzing' && 'Analyzing quality issues…'}
+                                    {(currentStage === 'processing' || currentStage === 'analyzing') && (externalLog || 'Streaming to server and processing…')}
                                 </div>
                             </div>
                             <span className="progress-percentage" style={{ marginLeft: '1rem' }}>
@@ -414,7 +391,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                         {/* Live logs area replaces filename block */}
                         <div className="log-display" style={{ marginTop: '0.75rem' }}>
                             <div className="log-icon">📋</div>
-                            <div className="log-text">{uploadLog}</div>
+                            <div className="log-text">{(currentStage === 'processing' || currentStage === 'analyzing') ? (externalLog || uploadLog) : uploadLog}</div>
                         </div>
                     </div>
                 </div>
