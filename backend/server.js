@@ -1268,8 +1268,15 @@ const processFileFromStorage = async (filename, progressId) => {
                     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
                     console.log(`Processed ${rowCount} rows, found ${issues.length} issues so far. Memory usage: ${memoryUsage}MB`);
                     if (progressId && metadata.size) {
-                        const pct = Math.min(99, Math.floor((rowCount / Math.max(1, rowCount)) * 99));
-                        updateProgress(progressId, pct, `Processed ${rowCount.toLocaleString()} rows...`);
+                        // Estimate total rows from bytesRead rate after enough samples
+                        const estTotalRows = (bytesRead > 0 && rowCount > 1000)
+                            ? Math.max(rowCount, Math.floor((rowCount / bytesRead) * metadata.size))
+                            : null;
+                        const pct = estTotalRows
+                            ? Math.min(99, Math.floor((rowCount / estTotalRows) * 99))
+                            : Math.min(99, Math.floor((bytesRead / metadata.size) * 99));
+                        const approxSuffix = estTotalRows ? ` of ~${estTotalRows.toLocaleString()} rows` : '';
+                        updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} rows${approxSuffix} so far`);
                     }
 
                     // Force garbage collection if available
