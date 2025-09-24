@@ -1249,6 +1249,8 @@ const processFileFromStorage = async (filename, progressId) => {
         // Exponential moving-average of bytes-per-row for stable estimation
         let emaBytesPerRow = null;
         const alpha = 0.25; // smoothing factor
+        let lastUpdateRows = 0;
+        let lastUpdateTime = Date.now();
 
         csvStream.on('data', (row) => {
             rowCount++;
@@ -1269,10 +1271,16 @@ const processFileFromStorage = async (filename, progressId) => {
                             const inst = bytesRead / Math.max(1, rowCount);
                             emaBytesPerRow = emaBytesPerRow == null ? inst : (alpha * inst + (1 - alpha) * emaBytesPerRow);
                             const estTotalRows = Math.max(rowCount, Math.floor(metadata.size / Math.max(1, emaBytesPerRow)));
-                            const pct = Math.max(5, Math.min(99, Math.floor((rowCount / Math.max(1, estTotalRows)) * 94) + 5));
-                            updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} of ~${estTotalRows.toLocaleString()} rows so far`);
+                            const pct = Math.max(5, Math.min(98, Math.floor((rowCount / Math.max(1, estTotalRows)) * 93) + 5));
+                            const now = Date.now();
+                            const rowsDelta = rowCount - lastUpdateRows;
+                            const timeDeltaSec = Math.max(0.001, (now - lastUpdateTime) / 1000);
+                            const rowsPerSec = rowsDelta > 0 ? Math.round(rowsDelta / timeDeltaSec) : 0;
+                            lastUpdateRows = rowCount;
+                            lastUpdateTime = now;
+                            updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} of ~${estTotalRows.toLocaleString()} rows so far`, { rowsProcessed: rowCount, estimatedTotalRows: estTotalRows, rowsPerSecond: rowsPerSec });
                         } else {
-                            updateProgress(progressId, 5, `Processing stream... ${rowCount.toLocaleString()} rows so far`);
+                            updateProgress(progressId, 5, `Processing stream... ${rowCount.toLocaleString()} rows so far`, { rowsProcessed: rowCount });
                         }
                     }
 
@@ -1472,7 +1480,14 @@ app.post('/api/process-from-storage', async (req, res) => {
             updateProgress(id, 5, `Excel file size: ${fileSizeMB}MB`);
 
             const stream = file.createReadStream();
-            const result = await analyzeExcelStreamFromReadable(stream, filename, (pct) => updateProgress(id, pct, `Analyzing Excel rows... ${pct}%`));
+            const result = await analyzeExcelStreamFromReadable(stream, filename, (stats) => {
+                if (stats && typeof stats.totalRows === 'number' && typeof stats.rowsProcessed === 'number') {
+                    const pct = Math.max(5, Math.min(98, Math.floor((stats.rowsProcessed / Math.max(1, stats.totalRows)) * 93) + 5));
+                    updateProgress(id, pct, `Analyzing Excel rows... ${stats.rowsProcessed.toLocaleString()} of ${stats.totalRows.toLocaleString()}`, { rowsProcessed: stats.rowsProcessed, estimatedTotalRows: stats.totalRows });
+                } else if (typeof stats === 'number') {
+                    updateProgress(id, Math.max(5, Math.min(98, stats)), `Analyzing Excel rows...`);
+                }
+            });
 
             const processingTime = Date.now() - startTime;
             if (!process.env.GCS_KEEP_FILES || process.env.GCS_KEEP_FILES !== 'true') {
@@ -2970,12 +2985,12 @@ app.use((error, req, res, next) => {
 
 // In-memory progress tracking per session
 const sessionProgress = new Map();
-const updateProgress = (sessionId, percent, log) => {
+const updateProgress = (sessionId, percent, log, extras = {}) => {
     if (!sessionId) return;
     const clamped = Math.max(0, Math.min(100, Math.floor(percent)));
     const prev = sessionProgress.get(sessionId);
     const monotonic = Math.max(prev?.percent || 0, clamped);
-    sessionProgress.set(sessionId, { percent: monotonic, log: log || (prev?.log || ''), updatedAt: Date.now() });
+    sessionProgress.set(sessionId, { percent: monotonic, log: log || (prev?.log || ''), updatedAt: Date.now(), ...prev, ...extras });
 };
 
 // Periodic cleanup for stale progress entries (older than 24h)
