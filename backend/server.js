@@ -1034,20 +1034,16 @@ const analyzeCSVStreamMemoryEfficient = (filePath, filename, progressCallback) =
                 rowIndex++;
             });
 
-            // Progress by bytes if available, else fall back to rows processed heuristic
+            // Progress by estimated total rows derived from bytes-per-row, not raw bytes
             if (progressCallback) {
                 let pct = 0;
-                if (totalBytes > 0 && readStream && typeof readStream.bytesRead === 'number') {
-                    pct = Math.floor((readStream.bytesRead / totalBytes) * 95);
-                } else {
-                    // Fallback: assume 100k rows baseline
-                    pct = Math.floor((processedRows / 100000) * 95);
-                }
-                pct = Math.max(1, Math.min(95, pct));
-                if (pct >= lastPct + 1) {
-                    lastPct = pct;
-                    progressCallback(pct);
-                }
+                const bytesRead = readStream && typeof readStream.bytesRead === 'number' ? readStream.bytesRead : 0;
+                const rowsSoFar = Math.max(1, processedRows);
+                const estBytesPerRow = bytesRead > 0 ? (bytesRead / rowsSoFar) : 0;
+                const estTotalRows = estBytesPerRow > 0 && totalBytes > 0 ? Math.max(rowsSoFar, Math.floor(totalBytes / estBytesPerRow)) : 100000;
+                pct = Math.floor((rowsSoFar / estTotalRows) * 94) + 5; // keep 5–99 range
+                pct = Math.max(5, Math.min(99, pct));
+                if (pct >= lastPct + 1) { lastPct = pct; progressCallback(pct); }
             }
 
             // Clear batch for memory
@@ -1239,11 +1235,8 @@ const processFileFromStorage = async (filename, progressId) => {
         const rawStream = file.createReadStream();
         let bytesRead = 0;
         rawStream.on('data', (chunk) => {
+            // Track bytes to estimate rows; do not drive percent directly from bytes
             bytesRead += chunk.length;
-            if (progressId && metadata.size) {
-                const pct = Math.min(99, Math.floor((bytesRead / metadata.size) * 99));
-                updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} rows so far`);
-            }
         });
         const csvStream = rawStream.pipe(csv());
 
@@ -1252,6 +1245,10 @@ const processFileFromStorage = async (filename, progressId) => {
             columnCount = headers.length;
             console.log(`Detected ${columnCount} columns:`, headers.slice(0, 5), columnCount > 5 ? '...' : '');
         });
+
+        // Exponential moving-average of bytes-per-row for stable estimation
+        let emaBytesPerRow = null;
+        const alpha = 0.25; // smoothing factor
 
         csvStream.on('data', (row) => {
             rowCount++;
@@ -1264,19 +1261,19 @@ const processFileFromStorage = async (filename, progressId) => {
                 currentBatch = [];
 
                 // Progress logging
-                if (rowCount % 50000 === 0) {
+                if (rowCount % 10000 === 0) {
                     const memoryUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
                     console.log(`Processed ${rowCount} rows, found ${issues.length} issues so far. Memory usage: ${memoryUsage}MB`);
                     if (progressId && metadata.size) {
-                        // Estimate total rows from bytesRead rate after enough samples
-                        const estTotalRows = (bytesRead > 0 && rowCount > 1000)
-                            ? Math.max(rowCount, Math.floor((rowCount / bytesRead) * metadata.size))
-                            : null;
-                        const pct = estTotalRows
-                            ? Math.min(99, Math.floor((rowCount / estTotalRows) * 99))
-                            : Math.min(99, Math.floor((bytesRead / metadata.size) * 99));
-                        const approxSuffix = estTotalRows ? ` of ~${estTotalRows.toLocaleString()} rows` : '';
-                        updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} rows${approxSuffix} so far`);
+                        if (bytesRead > 0 && rowCount > 0) {
+                            const inst = bytesRead / Math.max(1, rowCount);
+                            emaBytesPerRow = emaBytesPerRow == null ? inst : (alpha * inst + (1 - alpha) * emaBytesPerRow);
+                            const estTotalRows = Math.max(rowCount, Math.floor(metadata.size / Math.max(1, emaBytesPerRow)));
+                            const pct = Math.max(5, Math.min(99, Math.floor((rowCount / Math.max(1, estTotalRows)) * 94) + 5));
+                            updateProgress(progressId, pct, `Processing stream... ${rowCount.toLocaleString()} of ~${estTotalRows.toLocaleString()} rows so far`);
+                        } else {
+                            updateProgress(progressId, 5, `Processing stream... ${rowCount.toLocaleString()} rows so far`);
+                        }
                     }
 
                     // Force garbage collection if available
