@@ -115,7 +115,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                         if (b >= 1024) return (b / 1024).toFixed(2) + ' KB';
                         return b + ' B';
                     };
-                    const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)} (${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s)`;
+                    const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)}`;
                     setUploadLog(logLine);
                     if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: percentCompleted, log: logLine });
                 }
@@ -209,7 +209,7 @@ const FileUpload = ({ onUpload, onError, onLoadingChange, onStart, onProgressUpd
                     if (b >= 1024) return (b / 1024).toFixed(2) + ' KB';
                     return b + ' B';
                 };
-                const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)} (${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s)`;
+                const logLine = `Uploading ${fmt(progressEvent.loaded)} of ${fmt(progressEvent.total)}`;
                 setUploadLog(logLine);
                 if (onProgressUpdate) onProgressUpdate({ stage: 'uploading', percent: percentCompleted, log: logLine });
 
