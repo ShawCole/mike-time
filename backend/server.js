@@ -1222,6 +1222,30 @@ const processFileFromStorage = async (filename, progressId) => {
     const fileSizeMB = (metadata.size / 1024 / 1024).toFixed(2);
     console.log(`File size: ${fileSizeMB}MB`);
 
+    // Quick sample pass (small prefix) to estimate total rows reliably before heavy parsing
+    let estimatedTotalRows = 0;
+    try {
+        const SAMPLE_BYTES = 4 * 1024 * 1024; // 4MB
+        const sampleStream = file.createReadStream({ start: 0, end: Math.max(0, SAMPLE_BYTES - 1) });
+        let sampleRows = 0;
+        await new Promise((resolve) => {
+            sampleStream
+                .pipe(csv())
+                .on('data', () => { sampleRows += 1; })
+                .on('end', resolve)
+                .on('error', resolve);
+        });
+        if (sampleRows > 0) {
+            const avgBytesPerRow = Math.min(Number(metadata.size) || 0, SAMPLE_BYTES) / sampleRows;
+            estimatedTotalRows = Math.max(sampleRows, Math.floor((Number(metadata.size) || 0) / Math.max(1, avgBytesPerRow)));
+        }
+    } catch (_) { /* ignore */ }
+    if (!estimatedTotalRows || !Number.isFinite(estimatedTotalRows)) {
+        // Conservative fallback: assume 120 bytes per row
+        estimatedTotalRows = Math.max(1000, Math.floor((Number(metadata.size) || 0) / 120));
+    }
+    if (progressId) updateProgress(progressId, 5, 'Preparing stream…', { rowsProcessed: 0, estimatedTotalRows });
+
     // Stream processing with parallel analysis
     const issues = [];
     let rowCount = 0;

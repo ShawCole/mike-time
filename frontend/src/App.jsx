@@ -72,6 +72,10 @@ function App() {
             setProgressPercentage(lastPercent);
           }
           if (data.log) setCurrentLogLine(data.log);
+          // If backend provides rows info, prefer that for display and smoothing inside overlay
+          if (data.rowsProcessed || data.estimatedTotalRows) {
+            // nothing else needed here; FileUpload reads externalPercent & externalLog
+          }
           if (data.percent >= 100) {
             stopped = true;
             return;
